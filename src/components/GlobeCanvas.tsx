@@ -96,16 +96,16 @@ function buildEarthTextures(hubs: GeoPoint[]): {
   dayCanvas.height = height;
   const ctx = dayCanvas.getContext("2d")!;
 
-  // Deep ocean gradient
+  // Clear maritime ocean gradient
   const oceanGrad = ctx.createLinearGradient(0, 0, 0, height);
-  oceanGrad.addColorStop(0, "#0b1629");
-  oceanGrad.addColorStop(0.5, "#081222");
-  oceanGrad.addColorStop(1, "#0b1629");
+  oceanGrad.addColorStop(0, "#102744");
+  oceanGrad.addColorStop(0.5, "#0c1f38");
+  oceanGrad.addColorStop(1, "#102744");
   ctx.fillStyle = oceanGrad;
   ctx.fillRect(0, 0, width, height);
 
   // Subtle latitude/longitude graticule
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.065)";
+  ctx.strokeStyle = "rgba(148, 197, 240, 0.14)";
   ctx.lineWidth = 1;
   for (let lng = -150; lng <= 180; lng += 30) {
     const x = ((lng + 180) / 360) * width;
@@ -122,121 +122,156 @@ function buildEarthTextures(hubs: GeoPoint[]): {
     ctx.stroke();
   }
 
-  // Equator delicate accent
-  ctx.strokeStyle = "rgba(56, 189, 248, 0.14)";
+  // Equator accent
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.28)";
+  ctx.lineWidth = 1.25;
   ctx.beginPath();
   ctx.moveTo(0, height / 2);
   ctx.lineTo(width, height / 2);
   ctx.stroke();
 
-  // Extract GeoJSON features from bundled TopoJSON
+  // Extract GeoJSON features & coastline mesh from bundled TopoJSON
   const topology = countriesAtlas as unknown as Topology<{
     countries: GeometryCollection;
   }>;
   const geo = topojson.feature(topology, topology.objects.countries);
+  const coastlines = topojson.mesh(
+    topology,
+    topology.objects.countries,
+    (a, b) => a === b
+  );
+  const interiorBorders = topojson.mesh(
+    topology,
+    topology.objects.countries,
+    (a, b) => a !== b
+  );
 
   const projectX = (lng: number) => ((lng + 180) / 360) * width;
   const projectY = (lat: number) => ((90 - lat) / 180) * height;
 
-  const drawRing = (ring: number[][]) => {
+  const drawPathOnCtx = (targetCtx: CanvasRenderingContext2D, ring: number[][]) => {
     if (ring.length === 0) return;
-    ctx.moveTo(projectX(ring[0][0]), projectY(ring[0][1]));
+    targetCtx.moveTo(projectX(ring[0][0]), projectY(ring[0][1]));
     for (let i = 1; i < ring.length; i++) {
       const prevLng = ring[i - 1][0];
       const currLng = ring[i][0];
       const x = projectX(currLng);
       const y = projectY(ring[i][1]);
-      // Avoid horizontal wrap-around streaks across antimeridian
       if (Math.abs(currLng - prevLng) > 180) {
-        ctx.moveTo(x, y);
+        targetCtx.moveTo(x, y);
       } else {
-        ctx.lineTo(x, y);
+        targetCtx.lineTo(x, y);
       }
     }
   };
 
-  ctx.fillStyle = "#182942";
-  ctx.strokeStyle = "#335075";
-  ctx.lineWidth = 1.15;
+  const strokeMultiLine = (
+    targetCtx: CanvasRenderingContext2D,
+    mesh: { type: "MultiLineString"; coordinates: number[][][] }
+  ) => {
+    targetCtx.beginPath();
+    for (const line of mesh.coordinates) {
+      drawPathOnCtx(targetCtx, line);
+    }
+    targetCtx.stroke();
+  };
 
+  // Fill continents (high-contrast slate-teal)
+  ctx.fillStyle = "#2b4d70";
   if (geo.type === "FeatureCollection") {
     for (const feature of geo.features) {
       const geom = feature.geometry;
       if (!geom) continue;
       ctx.beginPath();
       if (geom.type === "Polygon") {
-        for (const ring of geom.coordinates) drawRing(ring);
+        for (const ring of geom.coordinates) drawPathOnCtx(ctx, ring);
       } else if (geom.type === "MultiPolygon") {
         for (const poly of geom.coordinates) {
-          for (const ring of poly) drawRing(ring);
+          for (const ring of poly) drawPathOnCtx(ctx, ring);
         }
       }
       ctx.fill();
-      ctx.stroke();
     }
   }
 
-  // Subtle continental dot texture on land for technical precision
+  // Interior country borders (refined subtle lines)
+  ctx.strokeStyle = "rgba(125, 179, 224, 0.38)";
+  ctx.lineWidth = 1.0;
+  strokeMultiLine(ctx, interiorBorders);
+
+  // Outer coastlines (bright & crisp so every continent/peninsula pops)
+  ctx.strokeStyle = "#7cc4fa";
+  ctx.lineWidth = 1.85;
+  strokeMultiLine(ctx, coastlines);
+
+  // Readable Night Hemisphere Canvas (clearly visible landmasses + city lights)
   const nightCanvas = document.createElement("canvas");
   nightCanvas.width = width;
   nightCanvas.height = height;
   const nctx = nightCanvas.getContext("2d")!;
 
-  nctx.fillStyle = "#040811";
+  const nightOceanGrad = nctx.createLinearGradient(0, 0, 0, height);
+  nightOceanGrad.addColorStop(0, "#0b1a2e");
+  nightOceanGrad.addColorStop(0.5, "#081426");
+  nightOceanGrad.addColorStop(1, "#0b1a2e");
+  nctx.fillStyle = nightOceanGrad;
   nctx.fillRect(0, 0, width, height);
 
-  // Dark land silhouettes on night map
-  nctx.fillStyle = "#0b1424";
-  nctx.strokeStyle = "#1a2d47";
+  // Subtle night graticule
+  nctx.strokeStyle = "rgba(100, 155, 205, 0.08)";
   nctx.lineWidth = 1;
+  for (let lng = -150; lng <= 180; lng += 30) {
+    const x = ((lng + 180) / 360) * width;
+    nctx.beginPath();
+    nctx.moveTo(x, 0);
+    nctx.lineTo(x, height);
+    nctx.stroke();
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const y = ((90 - lat) / 180) * height;
+    nctx.beginPath();
+    nctx.moveTo(0, y);
+    nctx.lineTo(width, y);
+    nctx.stroke();
+  }
+
+  // Night continents (clearly distinguishable from ocean)
+  nctx.fillStyle = "#1c3452";
   if (geo.type === "FeatureCollection") {
     for (const feature of geo.features) {
       const geom = feature.geometry;
       if (!geom) continue;
       nctx.beginPath();
       if (geom.type === "Polygon") {
-        for (const ring of geom.coordinates) {
-          if (ring.length === 0) continue;
-          nctx.moveTo(projectX(ring[0][0]), projectY(ring[0][1]));
-          for (let i = 1; i < ring.length; i++) {
-            if (Math.abs(ring[i][0] - ring[i - 1][0]) > 180) {
-              nctx.moveTo(projectX(ring[i][0]), projectY(ring[i][1]));
-            } else {
-              nctx.lineTo(projectX(ring[i][0]), projectY(ring[i][1]));
-            }
-          }
-        }
+        for (const ring of geom.coordinates) drawPathOnCtx(nctx, ring);
       } else if (geom.type === "MultiPolygon") {
         for (const poly of geom.coordinates) {
-          for (const ring of poly) {
-            if (ring.length === 0) continue;
-            nctx.moveTo(projectX(ring[0][0]), projectY(ring[0][1]));
-            for (let i = 1; i < ring.length; i++) {
-              if (Math.abs(ring[i][0] - ring[i - 1][0]) > 180) {
-                nctx.moveTo(projectX(ring[i][0]), projectY(ring[i][1]));
-              } else {
-                nctx.lineTo(projectX(ring[i][0]), projectY(ring[i][1]));
-              }
-            }
-          }
+          for (const ring of poly) drawPathOnCtx(nctx, ring);
         }
       }
       nctx.fill();
-      nctx.stroke();
     }
   }
+
+  nctx.strokeStyle = "rgba(100, 155, 205, 0.25)";
+  nctx.lineWidth = 0.9;
+  strokeMultiLine(nctx, interiorBorders);
+
+  nctx.strokeStyle = "#4f89bd";
+  nctx.lineWidth = 1.5;
+  strokeMultiLine(nctx, coastlines);
 
   // Warm golden city-light bloom around global financial hubs on night side
   for (const hub of hubs) {
     const cx = projectX(hub.lng);
     const cy = projectY(hub.lat);
-    const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, 26);
-    grad.addColorStop(0, "rgba(251, 191, 36, 0.55)");
-    grad.addColorStop(0.35, "rgba(245, 158, 11, 0.2)");
+    const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, 30);
+    grad.addColorStop(0, "rgba(251, 191, 36, 0.72)");
+    grad.addColorStop(0.35, "rgba(245, 158, 11, 0.28)");
     grad.addColorStop(1, "rgba(245, 158, 11, 0)");
     nctx.fillStyle = grad;
     nctx.beginPath();
-    nctx.arc(cx, cy, 26, 0, Math.PI * 2);
+    nctx.arc(cx, cy, 30, 0, Math.PI * 2);
     nctx.fill();
   }
 
@@ -438,24 +473,27 @@ export default function GlobeCanvas({
           vec3 nightColor = texture2D(uNightMap, vUv).rgb;
 
           float sunDot = dot(N, normalize(uSunDir));
-          float dayFactor = smoothstep(-0.18, 0.24, sunDot);
-          float twilight = exp(-pow(sunDot * 5.2, 2.0)) * 0.22;
+          float dayFactor = smoothstep(-0.22, 0.26, sunDot);
+          float twilight = exp(-pow(sunDot * 4.6, 2.0)) * 0.14;
 
-          // Subtle daylight boost + crisp ocean rim specular
-          vec3 litDay = dayColor * (1.06 + 0.22 * max(sunDot, 0.0));
+          // Balanced daylight boost + ocean specular sheen
+          vec3 litDay = dayColor * (1.12 + 0.28 * max(sunDot, 0.0));
+          vec3 litNight = nightColor * 1.15;
           vec3 H = normalize(normalize(uSunDir) + V);
-          float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.12 * dayFactor;
+          float spec = pow(max(dot(N, H), 0.0), 24.0) * 0.12 * dayFactor;
 
-          vec3 blended = mix(nightColor, litDay, dayFactor) + vec3(0.18, 0.45, 0.72) * twilight + vec3(0.45, 0.72, 0.95) * spec;
-          vec3 flatMode = dayColor * 1.15;
+          vec3 blended = mix(litNight, litDay, dayFactor) + vec3(0.08, 0.22, 0.42) * twilight + vec3(0.35, 0.62, 0.90) * spec;
+          vec3 flatMode = dayColor * 1.18;
 
           vec3 finalColor = mix(flatMode, blended, uShowDayNight);
 
-          // Delicate cyan Fresnel atmospheric limb
-          float rim = pow(1.0 - max(dot(N, V), 0.0), 3.4);
-          finalColor += vec3(0.18, 0.56, 0.86) * rim * 0.45;
+          // Crisp cyan-blue atmospheric Fresnel limb
+          float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+          finalColor += vec3(0.12, 0.42, 0.78) * rim * 0.55;
 
           gl_FragColor = vec4(finalColor, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
         }
       `,
     });
