@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import * as topojson from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
-import countriesAtlas from "world-atlas/countries-110m.json";
+import countriesAtlas from "world-atlas/countries-50m.json";
 import type {
   AnyMarketAsset,
   AssetCategory,
@@ -81,32 +81,42 @@ export function getMidpointCoords(a: GeoPoint, b: GeoPoint): GeoPoint {
 }
 
 /**
- * Renders world-atlas TopoJSON into a crisp 2048x1024 equirectangular canvas texture
- * plus a subtle financial-hub night glow texture. Zero external image requests!
+ * Builds high-resolution (4096x2048 when supported) anti-aliased day/night Earth textures
+ * AND true 3D vector LineSegments for coastlines & country borders from Natural Earth 50m data.
+ * Result: buttery-smooth coastlines with zero pixelation even at maximum zoom.
  */
-function buildEarthTextures(hubs: GeoPoint[]): {
+function buildEarthAssets(
+  hubs: GeoPoint[],
+  maxTextureSize: number,
+  maxAnisotropy: number
+): {
   dayMap: THREE.CanvasTexture;
   nightMap: THREE.CanvasTexture;
+  coastlineGeom: THREE.BufferGeometry;
+  borderGeom: THREE.BufferGeometry;
 } {
-  const width = 2048;
-  const height = 1024;
+  const width = maxTextureSize >= 4096 ? 4096 : 2048;
+  const height = width / 2;
+  const scale = width / 2048;
 
   const dayCanvas = document.createElement("canvas");
   dayCanvas.width = width;
   dayCanvas.height = height;
   const ctx = dayCanvas.getContext("2d")!;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
 
-  // Clear maritime ocean gradient
+  // Smooth maritime ocean gradient with subtle bathymetry depth
   const oceanGrad = ctx.createLinearGradient(0, 0, 0, height);
-  oceanGrad.addColorStop(0, "#102744");
-  oceanGrad.addColorStop(0.5, "#0c1f38");
-  oceanGrad.addColorStop(1, "#102744");
+  oceanGrad.addColorStop(0, "#102846");
+  oceanGrad.addColorStop(0.5, "#0c1f39");
+  oceanGrad.addColorStop(1, "#102846");
   ctx.fillStyle = oceanGrad;
   ctx.fillRect(0, 0, width, height);
 
-  // Subtle latitude/longitude graticule
-  ctx.strokeStyle = "rgba(148, 197, 240, 0.14)";
-  ctx.lineWidth = 1;
+  // Delicate latitude/longitude graticule
+  ctx.strokeStyle = "rgba(148, 197, 240, 0.11)";
+  ctx.lineWidth = 1.0 * scale;
   for (let lng = -150; lng <= 180; lng += 30) {
     const x = ((lng + 180) / 360) * width;
     ctx.beginPath();
@@ -123,14 +133,14 @@ function buildEarthTextures(hubs: GeoPoint[]): {
   }
 
   // Equator accent
-  ctx.strokeStyle = "rgba(56, 189, 248, 0.28)";
-  ctx.lineWidth = 1.25;
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+  ctx.lineWidth = 1.1 * scale;
   ctx.beginPath();
   ctx.moveTo(0, height / 2);
   ctx.lineTo(width, height / 2);
   ctx.stroke();
 
-  // Extract GeoJSON features & coastline mesh from bundled TopoJSON
+  // Extract high-detail 50m GeoJSON features & meshes
   const topology = countriesAtlas as unknown as Topology<{
     countries: GeometryCollection;
   }>;
@@ -165,19 +175,11 @@ function buildEarthTextures(hubs: GeoPoint[]): {
     }
   };
 
-  const strokeMultiLine = (
-    targetCtx: CanvasRenderingContext2D,
-    mesh: { type: "MultiLineString"; coordinates: number[][][] }
-  ) => {
-    targetCtx.beginPath();
-    for (const line of mesh.coordinates) {
-      drawPathOnCtx(targetCtx, line);
-    }
-    targetCtx.stroke();
-  };
-
-  // Fill continents (high-contrast slate-teal)
-  ctx.fillStyle = "#2b4d70";
+  // Fill continents with subtle coastal shelf halo for crisp, anti-aliased separation
+  ctx.save();
+  ctx.shadowColor = "rgba(56, 189, 248, 0.34)";
+  ctx.shadowBlur = 7 * scale;
+  ctx.fillStyle = "#294b6e";
   if (geo.type === "FeatureCollection") {
     for (const feature of geo.features) {
       const geom = feature.geometry;
@@ -193,22 +195,15 @@ function buildEarthTextures(hubs: GeoPoint[]): {
       ctx.fill();
     }
   }
+  ctx.restore();
 
-  // Interior country borders (refined subtle lines)
-  ctx.strokeStyle = "rgba(125, 179, 224, 0.38)";
-  ctx.lineWidth = 1.0;
-  strokeMultiLine(ctx, interiorBorders);
-
-  // Outer coastlines (bright & crisp so every continent/peninsula pops)
-  ctx.strokeStyle = "#7cc4fa";
-  ctx.lineWidth = 1.85;
-  strokeMultiLine(ctx, coastlines);
-
-  // Readable Night Hemisphere Canvas (clearly visible landmasses + city lights)
+  // Readable Night Hemisphere Canvas
   const nightCanvas = document.createElement("canvas");
   nightCanvas.width = width;
   nightCanvas.height = height;
   const nctx = nightCanvas.getContext("2d")!;
+  nctx.lineJoin = "round";
+  nctx.lineCap = "round";
 
   const nightOceanGrad = nctx.createLinearGradient(0, 0, 0, height);
   nightOceanGrad.addColorStop(0, "#0b1a2e");
@@ -218,8 +213,8 @@ function buildEarthTextures(hubs: GeoPoint[]): {
   nctx.fillRect(0, 0, width, height);
 
   // Subtle night graticule
-  nctx.strokeStyle = "rgba(100, 155, 205, 0.08)";
-  nctx.lineWidth = 1;
+  nctx.strokeStyle = "rgba(100, 155, 205, 0.07)";
+  nctx.lineWidth = 1.0 * scale;
   for (let lng = -150; lng <= 180; lng += 30) {
     const x = ((lng + 180) / 360) * width;
     nctx.beginPath();
@@ -235,8 +230,11 @@ function buildEarthTextures(hubs: GeoPoint[]): {
     nctx.stroke();
   }
 
-  // Night continents (clearly distinguishable from ocean)
-  nctx.fillStyle = "#1c3452";
+  // Night continents with soft coastal glow
+  nctx.save();
+  nctx.shadowColor = "rgba(56, 189, 248, 0.22)";
+  nctx.shadowBlur = 5 * scale;
+  nctx.fillStyle = "#1b3452";
   if (geo.type === "FeatureCollection") {
     for (const feature of geo.features) {
       const geom = feature.geometry;
@@ -252,38 +250,73 @@ function buildEarthTextures(hubs: GeoPoint[]): {
       nctx.fill();
     }
   }
-
-  nctx.strokeStyle = "rgba(100, 155, 205, 0.25)";
-  nctx.lineWidth = 0.9;
-  strokeMultiLine(nctx, interiorBorders);
-
-  nctx.strokeStyle = "#4f89bd";
-  nctx.lineWidth = 1.5;
-  strokeMultiLine(nctx, coastlines);
+  nctx.restore();
 
   // Warm golden city-light bloom around global financial hubs on night side
+  const hubRadius = 30 * scale;
   for (const hub of hubs) {
     const cx = projectX(hub.lng);
     const cy = projectY(hub.lat);
-    const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, 30);
+    const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, hubRadius);
     grad.addColorStop(0, "rgba(251, 191, 36, 0.72)");
     grad.addColorStop(0.35, "rgba(245, 158, 11, 0.28)");
     grad.addColorStop(1, "rgba(245, 158, 11, 0)");
     nctx.fillStyle = grad;
     nctx.beginPath();
-    nctx.arc(cx, cy, 30, 0, Math.PI * 2);
+    nctx.arc(cx, cy, hubRadius, 0, Math.PI * 2);
     nctx.fill();
   }
 
   const dayMap = new THREE.CanvasTexture(dayCanvas);
   dayMap.colorSpace = THREE.SRGBColorSpace;
-  dayMap.anisotropy = 8;
+  dayMap.generateMipmaps = true;
+  dayMap.minFilter = THREE.LinearMipmapLinearFilter;
+  dayMap.magFilter = THREE.LinearFilter;
+  dayMap.anisotropy = Math.min(16, maxAnisotropy);
 
   const nightMap = new THREE.CanvasTexture(nightCanvas);
   nightMap.colorSpace = THREE.SRGBColorSpace;
-  nightMap.anisotropy = 8;
+  nightMap.generateMipmaps = true;
+  nightMap.minFilter = THREE.LinearMipmapLinearFilter;
+  nightMap.magFilter = THREE.LinearFilter;
+  nightMap.anisotropy = Math.min(16, maxAnisotropy);
 
-  return { dayMap, nightMap };
+  // Build infinite-resolution 3D vector LineSegments directly on the sphere
+  const buildVectorLineGeometry = (
+    mesh: { type: "MultiLineString"; coordinates: number[][][] },
+    radius: number
+  ): THREE.BufferGeometry => {
+    let segCount = 0;
+    for (const line of mesh.coordinates) {
+      if (line.length > 1) segCount += line.length - 1;
+    }
+    const positions = new Float32Array(segCount * 2 * 3);
+    let offset = 0;
+
+    for (const line of mesh.coordinates) {
+      if (line.length < 2) continue;
+      let prev = latLngToVector3(line[0][1], line[0][0], radius);
+      for (let i = 1; i < line.length; i++) {
+        const curr = latLngToVector3(line[i][1], line[i][0], radius);
+        positions[offset++] = prev.x;
+        positions[offset++] = prev.y;
+        positions[offset++] = prev.z;
+        positions[offset++] = curr.x;
+        positions[offset++] = curr.y;
+        positions[offset++] = curr.z;
+        prev = curr;
+      }
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    return geom;
+  };
+
+  const coastlineGeom = buildVectorLineGeometry(coastlines, GLOBE_RADIUS + 0.0014);
+  const borderGeom = buildVectorLineGeometry(interiorBorders, GLOBE_RADIUS + 0.0011);
+
+  return { dayMap, nightMap, coastlineGeom, borderGeom };
 }
 
 interface IndexedMarkerObjects {
@@ -429,12 +462,16 @@ export default function GlobeCanvas({
     });
     scene.add(new THREE.Points(starGeom, starMat));
 
-    // Earth Textures & Custom Real-Time Day/Night Shader
+    // Earth Textures & Infinite-Resolution 3D Vector Coastlines
     const allHubCoords: GeoPoint[] = [
       ...propsRef.current.indices.map((i) => i.coords),
       ...propsRef.current.commodities.map((c) => c.coords),
     ];
-    const { dayMap, nightMap } = buildEarthTextures(allHubCoords);
+    const { dayMap, nightMap, coastlineGeom, borderGeom } = buildEarthAssets(
+      allHubCoords,
+      renderer.capabilities.maxTextureSize,
+      renderer.capabilities.getMaxAnisotropy()
+    );
 
     const earthUniforms = {
       uDayMap: { value: dayMap },
@@ -498,12 +535,31 @@ export default function GlobeCanvas({
       `,
     });
 
-    const earthGeom = new THREE.SphereGeometry(GLOBE_RADIUS, 72, 48);
+    const earthGeom = new THREE.SphereGeometry(GLOBE_RADIUS, 128, 96);
     const earthMesh = new THREE.Mesh(earthGeom, earthMat);
     scene.add(earthMesh);
 
+    // True 3D vector coastlines & interior country borders (zero pixelation at any zoom)
+    const borderMat = new THREE.LineBasicMaterial({
+      color: 0x6ba1cf,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+    });
+    const borderMesh = new THREE.LineSegments(borderGeom, borderMat);
+    scene.add(borderMesh);
+
+    const coastlineMat = new THREE.LineBasicMaterial({
+      color: 0x8cd0ff,
+      transparent: true,
+      opacity: 0.76,
+      depthWrite: false,
+    });
+    const coastlineMesh = new THREE.LineSegments(coastlineGeom, coastlineMat);
+    scene.add(coastlineMesh);
+
     // Outer atmospheric halo
-    const atmoGeom = new THREE.SphereGeometry(GLOBE_RADIUS * 1.075, 48, 32);
+    const atmoGeom = new THREE.SphereGeometry(GLOBE_RADIUS * 1.068, 96, 64);
     const atmoMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       transparent: true,
@@ -1043,6 +1099,10 @@ export default function GlobeCanvas({
 
       dayMap.dispose();
       nightMap.dispose();
+      coastlineGeom.dispose();
+      coastlineMat.dispose();
+      borderGeom.dispose();
+      borderMat.dispose();
       earthGeom.dispose();
       earthMat.dispose();
       atmoGeom.dispose();
