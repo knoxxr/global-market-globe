@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "headers": [
+    {
+      "source": "/api/market/snapshot",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=15, stale-while-revalidate=45"
+        },
+        {
+          "key": "Vercel-CDN-Cache-Control",
+          "value": "public, s-maxage=15, stale-while-revalidate=45"
+        }
+      ]
+    }
+  ]
+}
