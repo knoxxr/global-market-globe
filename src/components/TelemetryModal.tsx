@@ -45,7 +45,17 @@ export default function TelemetryModal({
             <div>
               <h2 className="modal-title">다중 접속 API 보호 · Vercel 스트리밍 상태</h2>
               <p className="modal-sub">
-                동시 접속자가 급증해도 Polygon / Finnhub API 쿼터를 보호하는 3단계 캐시 팬아웃
+                상태:{" "}
+                <strong>
+                  {connectionStatus === "live"
+                    ? "SSE 실시간 수신"
+                    : connectionStatus === "polling"
+                    ? "Edge CDN 폴링"
+                    : connectionStatus === "paused"
+                    ? "백그라운드 절전"
+                    : "연결 중..."}
+                </strong>{" "}
+                · 동시 접속자 급증 시에도 쿼터를 보호하는 3단계 캐시 팬아웃
               </p>
             </div>
           </div>
@@ -94,15 +104,9 @@ export default function TelemetryModal({
 
         <div className="telemetry-stats-grid">
           <div className="stat-tile">
-            <span className="stat-k">연결 상태</span>
-            <span className="stat-v">
-              {connectionStatus === "live"
-                ? "SSE 실시간 수신"
-                : connectionStatus === "polling"
-                ? "Edge CDN 폴링"
-                : connectionStatus === "paused"
-                ? "백그라운드 절전"
-                : "연결 중..."}
+            <span className="stat-k">실데이터 매핑</span>
+            <span className="stat-v mono-num text-up">
+              {telemetry?.liveMappedCount ?? 0} / {telemetry?.totalInstrumentsCount ?? 31} 종목
             </span>
           </div>
           <div className="stat-tile">
@@ -126,7 +130,7 @@ export default function TelemetryModal({
             </span>
           </div>
           <div className="stat-tile">
-            <span className="stat-k">외부 API 누적 호출</span>
+            <span className="stat-k">업스트림 동기화</span>
             <span className="stat-v mono-num">
               {telemetry?.upstreamCallsTotal ?? 0}회
             </span>
@@ -143,27 +147,40 @@ export default function TelemetryModal({
           <div className="provider-row">
             <div className="provider-name">
               <Activity size={14} />
-              <span>Polygon.io (배치 스냅샷 · 2회/주기)</span>
+              <span>글로벌 실거래소 피드 (Yahoo v8 + ECB 환율)</span>
+            </div>
+            <span
+              className={`status-pill ${
+                (telemetry?.liveMappedCount ?? 0) > 0 ? "pill-ok" : "pill-muted"
+              }`}
+            >
+              {(telemetry?.liveMappedCount ?? 0) > 0 ? "실데이터 활성" : "대기"}
+            </span>
+          </div>
+          <div className="provider-row">
+            <div className="provider-name">
+              <Activity size={14} />
+              <span>Polygon.io (실시간 FX·지수 배치 스냅샷)</span>
             </div>
             <span
               className={`status-pill ${
                 telemetry?.providersConfigured.polygon ? "pill-ok" : "pill-muted"
               }`}
             >
-              {telemetry?.providersConfigured.polygon ? "키 연결됨" : "미설정 (시뮬레이션)"}
+              {telemetry?.providersConfigured.polygon ? "키 연결됨 (우선)" : "선택 연동"}
             </span>
           </div>
           <div className="provider-row">
             <div className="provider-name">
               <Activity size={14} />
-              <span>Finnhub (벌크 FX + 라운드로빈 쿼터 제한)</span>
+              <span>Finnhub (벌크 FX + OANDA 원자재)</span>
             </div>
             <span
               className={`status-pill ${
                 telemetry?.providersConfigured.finnhub ? "pill-ok" : "pill-muted"
               }`}
             >
-              {telemetry?.providersConfigured.finnhub ? "키 연결됨" : "미설정 (시뮬레이션)"}
+              {telemetry?.providersConfigured.finnhub ? "키 연결됨 (우선)" : "선택 연동"}
             </span>
           </div>
           <div className="provider-row">
@@ -182,8 +199,8 @@ export default function TelemetryModal({
         </div>
 
         <div className="modal-footnote">
-          Vercel 환경변수에 <code>POLYGON_API_KEY</code>, <code>FINNHUB_API_KEY</code>,{" "}
-          <code>UPSTASH_REDIS_REST_URL</code>을 추가하면 즉시 실데이터 멀티리전 캐시 모드로 전환됩니다.
+          API 키가 없어도 31개 글로벌 주가지수·외환·원자재 실제 시세와 15분봉 일중 차트가 자동 매핑되며,{" "}
+          <code>POLYGON_API_KEY</code>·<code>FINNHUB_API_KEY</code>를 추가하면 상용 API가 1순위로 우선 적용됩니다.
         </div>
       </div>
     </div>

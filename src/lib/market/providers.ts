@@ -1,3 +1,4 @@
+import dns from "node:dns";
 import {
   COMMODITY_CATALOG,
   FX_CATALOG,
@@ -14,81 +15,87 @@ import type {
   MarketSnapshot,
 } from "./types";
 
+// Prefer IPv4 in Node 22 undici to avoid IPv6 ENETUNREACH timeouts on cloud VMs
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {
+  // Ignore on runtimes without dns.setDefaultResultOrder
+}
+
 interface QuotePatch {
   price: number;
   prevClose?: number;
   changePercent?: number;
   dayHigh?: number;
   dayLow?: number;
+  sparkline?: number[];
+  marketTime?: number | null;
   source: DataSourceKind;
 }
 
 interface ProviderFetchResult {
   patches: Map<string, QuotePatch>;
-  source: DataSourceKind;
   upstreamRequestsMade: number;
 }
+
+const YAHOO_HOSTS = [
+  "https://query1.finance.yahoo.com",
+  "https://query2.finance.yahoo.com",
+];
+
+const BROWSER_UA = "Mozilla/5.0";
 
 function roundTo(val: number, decimals: number): number {
   const factor = Math.pow(10, decimals);
   return Math.round(val * factor) / factor;
 }
 
-function deterministicSeed(str: string, bucket: number): number {
-  let hash = 2166136261 ^ bucket;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
+function downsampleSeries(values: number[], maxPoints: number, decimals: number): number[] {
+  const valid = values.filter((v) => typeof v === "number" && Number.isFinite(v) && v > 0);
+  if (valid.length === 0) return [];
+  if (valid.length <= maxPoints) {
+    return valid.map((v) => roundTo(v, decimals));
   }
-  return ((hash >>> 0) % 10000) / 10000;
+  const sampled: number[] = [];
+  const step = (valid.length - 1) / (maxPoints - 1);
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.round(i * step);
+    sampled.push(roundTo(valid[idx], decimals));
+  }
+  return sampled;
 }
 
-function generateInitialSparkline(
-  baseline: number,
-  currentPrice: number,
-  volatility: number,
-  id: string,
+function updateSparkline(
+  prev: number[] | undefined,
+  nextPrice: number,
   decimals: number
 ): number[] {
-  const points = 24;
-  const series: number[] = [];
-  const start = baseline;
-  const bucket = Math.floor(Date.now() / 3_600_000);
-  for (let i = 0; i < points; i++) {
-    const t = i / (points - 1);
-    const wave =
-      Math.sin(t * Math.PI * 2.5 + deterministicSeed(id, bucket) * 6.28) *
-      volatility *
-      0.38;
-    const micro = (deterministicSeed(`${id}-${i}`, bucket) - 0.5) * volatility * 0.25;
-    const interp = start + (currentPrice - start) * t;
-    const val = i === points - 1 ? currentPrice : interp * (1 + wave * (1 - t * 0.6) + micro);
-    series.push(roundTo(Math.max(val, baseline * 0.5), decimals));
-  }
-  return series;
-}
-
-function updateSparkline(prev: number[], nextPrice: number, decimals: number): number[] {
   const rounded = roundTo(nextPrice, decimals);
-  if (!prev || prev.length < 4) return [rounded];
+  if (!prev || prev.length === 0) return [rounded, rounded];
   const last = prev[prev.length - 1];
   if (Math.abs(last - rounded) / Math.max(last, 1e-6) < 1e-6) {
     return prev;
   }
-  return [...prev.slice(-23), rounded];
+  return [...prev.slice(-27), rounded];
 }
 
-async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 4500): Promise<T | null> {
+async function fetchJsonWithTimeout<T>(
+  url: string,
+  timeoutMs = 4500,
+  headers?: Record<string, string>
+): Promise<T | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       cache: "no-store",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...headers,
+      },
     });
     if (res.status === 429) {
-      // Trip circuit breaker for 60 seconds to respect rate limits
       const store = getCacheStore();
       store.stats.circuitBreakerUntil = Date.now() + 60_000;
       return null;
@@ -103,14 +110,14 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 4500): Promise<T
 }
 
 /**
- * Polygon.io Batched Adapter
- * Uses snapshot endpoints so 31 instruments take at most 2 HTTP calls total!
+ * Tier 1: Polygon.io Batched Adapter (Real Forex + Real Indices Snapshot)
+ * Uses 2 batched HTTP requests total so multi-user refreshes stay well under rate limits.
  */
 async function fetchFromPolygon(apiKey: string): Promise<ProviderFetchResult> {
   const patches = new Map<string, QuotePatch>();
   let upstreamRequestsMade = 0;
 
-  // 1) Batched Forex Snapshot (1 single HTTP request for all FX pairs)
+  // 1) Batched Real Forex Snapshot
   const fxTickers = FX_CATALOG.map((f) => f.polygonTicker).join(",");
   const fxUrl = `https://api.polygon.io/v2/snapshot/locale/global/markets/forex/tickers?tickers=${encodeURIComponent(
     fxTickers
@@ -121,8 +128,9 @@ async function fetchFromPolygon(apiKey: string): Promise<ProviderFetchResult> {
     tickers?: Array<{
       ticker: string;
       todaysChangePerc?: number;
+      updated?: number;
       lastQuote?: { a?: number; b?: number };
-      day?: { c?: number; h?: number; l?: number; o?: number };
+      day?: { c?: number; h?: number; l?: number };
       prevDay?: { c?: number };
     }>;
   }>(fxUrl);
@@ -143,91 +151,69 @@ async function fetchFromPolygon(apiKey: string): Promise<ProviderFetchResult> {
           changePercent: t.todaysChangePerc,
           dayHigh: t.day?.h,
           dayLow: t.day?.l,
+          marketTime: t.updated ? Math.floor(t.updated / 1_000_000) : Date.now(),
           source: "polygon",
         });
       }
     }
   }
 
-  // 2) Batched US ETF Proxy Snapshot for Global Indices & Commodities (1 single HTTP request!)
-  const stockTickers = [
-    ...INDEX_CATALOG.map((i) => i.polygonProxyTicker),
-    ...COMMODITY_CATALOG.map((c) => c.polygonProxyTicker),
-  ].join(",");
+  // 2) Batched Real Polygon Indices Snapshot (for indices with I: ticker)
+  const indexTargets = INDEX_CATALOG.filter((i) => i.polygonIndexTicker);
+  if (indexTargets.length > 0) {
+    const idxParam = indexTargets.map((i) => i.polygonIndexTicker).join(",");
+    const idxUrl = `https://api.polygon.io/v3/snapshot/indices?ticker.any_of=${encodeURIComponent(
+      idxParam
+    )}&apiKey=${encodeURIComponent(apiKey)}`;
 
-  const stocksUrl = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(
-    stockTickers
-  )}&apiKey=${encodeURIComponent(apiKey)}`;
+    upstreamRequestsMade += 1;
+    const idxRes = await fetchJsonWithTimeout<{
+      results?: Array<{
+        ticker: string;
+        value?: number;
+        session?: {
+          change_percent?: number;
+          previous_close?: number;
+          high?: number;
+          low?: number;
+        };
+      }>;
+    }>(idxUrl);
 
-  upstreamRequestsMade += 1;
-  const stockRes = await fetchJsonWithTimeout<{
-    tickers?: Array<{
-      ticker: string;
-      todaysChangePerc?: number;
-      lastTrade?: { p?: number };
-      day?: { c?: number; h?: number; l?: number };
-      prevDay?: { c?: number };
-    }>;
-  }>(stocksUrl);
-
-  if (stockRes?.tickers) {
-    const byTicker = new Map(stockRes.tickers.map((t) => [t.ticker, t]));
-    for (const idx of INDEX_CATALOG) {
-      const t = byTicker.get(idx.polygonProxyTicker);
-      if (!t) continue;
-      const rawPrice = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c;
-      if (rawPrice && rawPrice > 0) {
-        patches.set(idx.id, {
-          price: rawPrice * idx.proxyMultiplier,
-          prevClose: t.prevDay?.c ? t.prevDay.c * idx.proxyMultiplier : undefined,
-          changePercent: t.todaysChangePerc,
-          dayHigh: t.day?.h ? t.day.h * idx.proxyMultiplier : undefined,
-          dayLow: t.day?.l ? t.day.l * idx.proxyMultiplier : undefined,
-          source: "polygon",
-        });
-      }
-    }
-    for (const cmd of COMMODITY_CATALOG) {
-      const t = byTicker.get(cmd.polygonProxyTicker);
-      if (!t) continue;
-      const rawPrice = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c;
-      if (rawPrice && rawPrice > 0) {
-        patches.set(cmd.id, {
-          price: rawPrice * cmd.proxyMultiplier,
-          prevClose: t.prevDay?.c ? t.prevDay.c * cmd.proxyMultiplier : undefined,
-          changePercent: t.todaysChangePerc,
-          dayHigh: t.day?.h ? t.day.h * cmd.proxyMultiplier : undefined,
-          dayLow: t.day?.l ? t.day.l * cmd.proxyMultiplier : undefined,
-          source: "polygon",
-        });
+    if (idxRes?.results) {
+      const byTicker = new Map(idxRes.results.map((r) => [r.ticker, r]));
+      for (const idx of indexTargets) {
+        const hit = idx.polygonIndexTicker ? byTicker.get(idx.polygonIndexTicker) : undefined;
+        if (hit?.value && hit.value > 0) {
+          patches.set(idx.id, {
+            price: hit.value,
+            prevClose: hit.session?.previous_close,
+            changePercent: hit.session?.change_percent,
+            dayHigh: hit.session?.high,
+            dayLow: hit.session?.low,
+            marketTime: Date.now(),
+            source: "polygon",
+          });
+        }
       }
     }
   }
 
-  return {
-    patches,
-    source: patches.size > 0 ? "polygon" : "simulation",
-    upstreamRequestsMade,
-  };
+  return { patches, upstreamRequestsMade };
 }
 
-let finnhubRotationCursor = 0;
-
 /**
- * Finnhub Rate-Limited Adapter
- * Uses 1 FX bulk call + max 6 staggered quote calls per refresh cycle
- * so total usage stays far below Finnhub's 60 req/min limit.
+ * Tier 2: Finnhub Adapter (Bulk FX + Real OANDA Commodity Spot Quotes)
  */
 async function fetchFromFinnhub(
   apiKey: string,
-  missingIds?: Set<string>
+  missingIds: Set<string>
 ): Promise<ProviderFetchResult> {
   const patches = new Map<string, QuotePatch>();
   let upstreamRequestsMade = 0;
 
-  // 1) Single bulk FX rates request (base=USD) covers all 9 FX corridors
-  const needFx = !missingIds || FX_CATALOG.some((f) => missingIds.has(f.id));
-  if (needFx) {
+  // 1) Bulk FX rates (1 HTTP request covers all 9 FX pairs)
+  if (FX_CATALOG.some((f) => missingIds.has(f.id))) {
     upstreamRequestsMade += 1;
     const fxData = await fetchJsonWithTimeout<{
       quote?: Record<string, number>;
@@ -236,7 +222,7 @@ async function fetchFromFinnhub(
     const q = fxData?.quote;
     if (q) {
       for (const pair of FX_CATALOG) {
-        if (missingIds && !missingIds.has(pair.id)) continue;
+        if (!missingIds.has(pair.id)) continue;
         let rate: number | null = null;
         if (pair.baseCurrency === "USD" && q[pair.quoteCurrency]) {
           rate = q[pair.quoteCurrency];
@@ -248,6 +234,7 @@ async function fetchFromFinnhub(
         if (rate && Number.isFinite(rate) && rate > 0) {
           patches.set(pair.id, {
             price: rate,
+            marketTime: Date.now(),
             source: "finnhub",
           });
         }
@@ -255,31 +242,13 @@ async function fetchFromFinnhub(
     }
   }
 
-  // 2) Staggered round-robin quote batch (max 6 calls per cycle)
-  const quoteTargets = [
-    ...INDEX_CATALOG.map((i) => ({
-      id: i.id,
-      symbol: i.finnhubSymbol,
-      multiplier: i.proxyMultiplier,
-    })),
-    ...COMMODITY_CATALOG.map((c) => ({
-      id: c.id,
-      symbol: c.finnhubSymbol,
-      multiplier: c.proxyMultiplier,
-    })),
-  ].filter((item) => !missingIds || missingIds.has(item.id));
+  // 2) Real OANDA Commodity Quotes (capped at 4 per cycle to stay far below 60/min)
+  const commodityTargets = COMMODITY_CATALOG.filter(
+    (c) => missingIds.has(c.id) && c.finnhubOandaSymbol
+  ).slice(0, 4);
 
-  const batchSize = Math.min(6, quoteTargets.length);
-  const selected: typeof quoteTargets = [];
-  for (let i = 0; i < batchSize; i++) {
-    const idx = (finnhubRotationCursor + i) % quoteTargets.length;
-    selected.push(quoteTargets[idx]);
-  }
-  finnhubRotationCursor =
-    quoteTargets.length > 0 ? (finnhubRotationCursor + batchSize) % quoteTargets.length : 0;
-
-  const quoteResults = await Promise.all(
-    selected.map(async (target) => {
+  const results = await Promise.all(
+    commodityTargets.map(async (cmd) => {
       upstreamRequestsMade += 1;
       const data = await fetchJsonWithTimeout<{
         c?: number;
@@ -287,59 +256,196 @@ async function fetchFromFinnhub(
         dp?: number;
         h?: number;
         l?: number;
+        t?: number;
       }>(
         `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(
-          target.symbol
+          cmd.finnhubOandaSymbol!
         )}&token=${encodeURIComponent(apiKey)}`
       );
-      return { target, data };
+      return { cmd, data };
     })
   );
 
-  for (const { target, data } of quoteResults) {
+  for (const { cmd, data } of results) {
     if (data && data.c && data.c > 0) {
-      patches.set(target.id, {
-        price: data.c * target.multiplier,
-        prevClose: data.pc ? data.pc * target.multiplier : undefined,
+      patches.set(cmd.id, {
+        price: data.c,
+        prevClose: data.pc,
         changePercent: data.dp,
-        dayHigh: data.h ? data.h * target.multiplier : undefined,
-        dayLow: data.l ? data.l * target.multiplier : undefined,
+        dayHigh: data.h,
+        dayLow: data.l,
+        marketTime: data.t ? data.t * 1000 : Date.now(),
         source: "finnhub",
       });
     }
   }
 
+  return { patches, upstreamRequestsMade };
+}
+
+interface YahooSparkItem {
+  symbol?: string;
+  timestamp?: number[];
+  start?: number;
+  end?: number;
+  chartPreviousClose?: number;
+  previousClose?: number;
+  fulldayPrice?: number;
+  fulldayChange?: number;
+  fulldayChangePercent?: number;
+  close?: Array<number | null>;
+}
+
+/**
+ * Tier 3: Real-Time Yahoo Finance v8 Batched Spark Feed (Key-Free Public Market Data)
+ * Fetches ALL 31 global indices, FX pairs, and commodity futures + real 15m intraday
+ * sparklines in just 2 batched HTTP requests (16 + 15 symbols), eliminating 429 bursts!
+ */
+async function fetchYahooSparkChunk(
+  chunk: Array<{ id: string; yahooSymbol: string; decimals: number }>,
+  chunkIndex: number
+): Promise<Map<string, QuotePatch>> {
+  const patches = new Map<string, QuotePatch>();
+  const symbolsParam = chunk.map((t) => t.yahooSymbol).join(",");
+  const byYahooSymbol = new Map(chunk.map((t) => [t.yahooSymbol, t]));
+
+  const hostOrder =
+    chunkIndex % 2 === 0
+      ? [YAHOO_HOSTS[0], YAHOO_HOSTS[1]]
+      : [YAHOO_HOSTS[1], YAHOO_HOSTS[0]];
+
+  for (const host of hostOrder) {
+    const url = `${host}/v8/finance/spark?symbols=${encodeURIComponent(
+      symbolsParam
+    )}&range=1d&interval=15m`;
+    const json = await fetchJsonWithTimeout<Record<string, YahooSparkItem>>(url, 5500, {
+      "User-Agent": BROWSER_UA,
+    });
+    if (!json || typeof json !== "object") continue;
+
+    let matchedAny = false;
+    for (const [sym, item] of Object.entries(json)) {
+      const target = byYahooSymbol.get(sym) ?? byYahooSymbol.get(item?.symbol ?? "");
+      if (!target || !item) continue;
+
+      const rawCloses = (item.close ?? []).filter(
+        (v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0
+      );
+      const price =
+        typeof item.fulldayPrice === "number" && item.fulldayPrice > 0
+          ? item.fulldayPrice
+          : rawCloses[rawCloses.length - 1];
+
+      if (!price || !Number.isFinite(price) || price <= 0) continue;
+
+      const prevClose =
+        item.chartPreviousClose ??
+        item.previousClose ??
+        (typeof item.fulldayChange === "number" ? price - item.fulldayChange : price);
+
+      const series =
+        rawCloses.length >= 3
+          ? downsampleSeries([...rawCloses, price], 28, target.decimals)
+          : [roundTo(prevClose, target.decimals), roundTo(price, target.decimals)];
+
+      const dayHigh = Math.max(...series, price);
+      const dayLow = Math.min(...series, price);
+
+      const changePct =
+        typeof item.fulldayChangePercent === "number" &&
+        Number.isFinite(item.fulldayChangePercent)
+          ? item.fulldayChangePercent
+          : ((price - prevClose) / Math.max(prevClose, 1e-6)) * 100;
+
+      const lastTs =
+        item.timestamp && item.timestamp.length > 0
+          ? item.timestamp[item.timestamp.length - 1] * 1000
+          : item.end
+          ? item.end * 1000
+          : Date.now();
+
+      patches.set(target.id, {
+        price,
+        prevClose,
+        changePercent: changePct,
+        dayHigh,
+        dayLow,
+        sparkline: series,
+        marketTime: lastTs,
+        source: "yahoo",
+      });
+      matchedAny = true;
+    }
+
+    if (matchedAny) break;
+  }
+
+  return patches;
+}
+
+async function fetchFromYahooBatch(
+  targets: Array<{ id: string; yahooSymbol: string; decimals: number }>
+): Promise<ProviderFetchResult> {
+  const patches = new Map<string, QuotePatch>();
+  if (targets.length === 0) return { patches, upstreamRequestsMade: 0 };
+
+  const chunkSize = 16;
+  const chunks: Array<typeof targets> = [];
+  for (let i = 0; i < targets.length; i += chunkSize) {
+    chunks.push(targets.slice(i, i + chunkSize));
+  }
+
+  const chunkResults = await Promise.all(
+    chunks.map((chunk, idx) => fetchYahooSparkChunk(chunk, idx))
+  );
+  for (const res of chunkResults) {
+    res.forEach((v, k) => patches.set(k, v));
+  }
+
   return {
     patches,
-    source: patches.size > 0 ? "finnhub" : "simulation",
-    upstreamRequestsMade,
+    upstreamRequestsMade: chunks.length,
   };
 }
 
-function evolveSimulatedPrice(
-  baseline: number,
-  prevPrice: number | undefined,
-  volatility: number,
-  isOpen: boolean,
-  id: string
-): { price: number; prevClose: number } {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const dayBucket = Math.floor(Date.now() / 86_400_000);
-  const dayBias = (deterministicSeed(id, dayBucket) - 0.48) * volatility * 2.1;
-  const prevClose = baseline;
+/**
+ * Tier 4: Frankfurter ECB FX Reference Rates Backup (1 single lightweight HTTP request)
+ */
+async function fetchFromFrankfurterFx(missingIds: Set<string>): Promise<ProviderFetchResult> {
+  const patches = new Map<string, QuotePatch>();
+  const missingFx = FX_CATALOG.filter((f) => missingIds.has(f.id));
+  if (missingFx.length === 0) return { patches, upstreamRequestsMade: 0 };
 
-  const anchor = prevPrice ?? baseline * (1 + dayBias);
-  // Active sessions move faster; closed markets retain slight futures/after-hours drift
-  const stepScale = isOpen ? volatility * 0.14 : volatility * 0.025;
-  const pseudoRandom =
-    Math.sin(nowSec * 0.37 + deterministicSeed(id, 99) * 100) * 0.45 +
-    (Math.random() - 0.5) * 1.1;
-  // Gentle mean reversion toward intraday bias
-  const target = baseline * (1 + dayBias);
-  const meanRevert = (target - anchor) * 0.04;
-  const nextPrice = Math.max(anchor + anchor * stepScale * pseudoRandom + meanRevert, baseline * 0.75);
+  const data = await fetchJsonWithTimeout<{
+    rates?: Record<string, number>;
+    date?: string;
+  }>(
+    "https://api.frankfurter.dev/v1/latest?base=USD&symbols=KRW,EUR,JPY,GBP,CHF,AUD,CNY,SGD",
+    3500
+  );
 
-  return { price: nextPrice, prevClose };
+  const rates = data?.rates;
+  if (!rates) return { patches, upstreamRequestsMade: 1 };
+
+  for (const pair of missingFx) {
+    let rate: number | null = null;
+    if (pair.baseCurrency === "USD" && rates[pair.quoteCurrency]) {
+      rate = rates[pair.quoteCurrency];
+    } else if (pair.quoteCurrency === "USD" && rates[pair.baseCurrency]) {
+      rate = 1 / rates[pair.baseCurrency];
+    } else if (rates[pair.baseCurrency] && rates[pair.quoteCurrency]) {
+      rate = rates[pair.quoteCurrency] / rates[pair.baseCurrency];
+    }
+    if (rate && Number.isFinite(rate) && rate > 0) {
+      patches.set(pair.id, {
+        price: rate,
+        marketTime: Date.now(),
+        source: "frankfurter",
+      });
+    }
+  }
+
+  return { patches, upstreamRequestsMade: 1 };
 }
 
 export async function fetchFreshMarketData(
@@ -349,6 +455,7 @@ export async function fetchFreshMarketData(
   fx: FxPairAsset[];
   commodities: CommodityAsset[];
   activeSource: DataSourceKind;
+  liveMappedCount: number;
   upstreamCallsMade: number;
 }> {
   const store = getCacheStore();
@@ -360,37 +467,70 @@ export async function fetchFreshMarketData(
 
   const mergedPatches = new Map<string, QuotePatch>();
   let upstreamCallsMade = 0;
-  const sourcesUsed = new Set<DataSourceKind>();
 
+  const allTargets = [
+    ...INDEX_CATALOG.map((i) => ({
+      id: i.id,
+      yahooSymbol: i.yahooSymbol,
+      decimals: i.decimals,
+    })),
+    ...FX_CATALOG.map((f) => ({
+      id: f.id,
+      yahooSymbol: f.yahooSymbol,
+      decimals: f.decimals,
+    })),
+    ...COMMODITY_CATALOG.map((c) => ({
+      id: c.id,
+      yahooSymbol: c.yahooSymbol,
+      decimals: c.decimals,
+    })),
+  ];
+
+  // Tier 1: Polygon.io (if configured)
   if (!circuitOpen && polygonKey) {
     const polyRes = await fetchFromPolygon(polygonKey);
     upstreamCallsMade += polyRes.upstreamRequestsMade;
-    if (polyRes.patches.size > 0) {
-      sourcesUsed.add("polygon");
-      polyRes.patches.forEach((v, k) => mergedPatches.set(k, v));
+    polyRes.patches.forEach((v, k) => mergedPatches.set(k, v));
+  }
+
+  // Tier 2: Finnhub (if configured, fills missing instruments)
+  if (!circuitOpen && finnhubKey) {
+    const missingAfterPoly = new Set(
+      allTargets.filter((t) => !mergedPatches.has(t.id)).map((t) => t.id)
+    );
+    if (missingAfterPoly.size > 0) {
+      const finnRes = await fetchFromFinnhub(finnhubKey, missingAfterPoly);
+      upstreamCallsMade += finnRes.upstreamRequestsMade;
+      finnRes.patches.forEach((v, k) => mergedPatches.set(k, v));
     }
   }
 
-  if (!circuitOpen && finnhubKey) {
-    const allIds = new Set([
-      ...INDEX_CATALOG.map((i) => i.id),
-      ...FX_CATALOG.map((f) => f.id),
-      ...COMMODITY_CATALOG.map((c) => c.id),
-    ]);
-    const missing = new Set([...allIds].filter((id) => !mergedPatches.has(id)));
-    if (missing.size > 0) {
-      const finnRes = await fetchFromFinnhub(finnhubKey, missing);
-      upstreamCallsMade += finnRes.upstreamRequestsMade;
-      if (finnRes.patches.size > 0) {
-        sourcesUsed.add("finnhub");
-        finnRes.patches.forEach((v, k) => mergedPatches.set(k, v));
-      }
+  // Tier 3: Real-Time Yahoo Finance v8 Chart Feed (maps all remaining real indices, FX, commodities + real sparklines)
+  if (!circuitOpen) {
+    const missingForYahoo = allTargets.filter((t) => !mergedPatches.has(t.id));
+    if (missingForYahoo.length > 0) {
+      const yahooRes = await fetchFromYahooBatch(missingForYahoo);
+      upstreamCallsMade += yahooRes.upstreamRequestsMade;
+      yahooRes.patches.forEach((v, k) => mergedPatches.set(k, v));
     }
+  }
+
+  // Tier 4: Frankfurter ECB FX backup if any FX pair is still missing
+  const missingForFrankfurter = new Set(
+    FX_CATALOG.filter((f) => !mergedPatches.has(f.id)).map((f) => f.id)
+  );
+  if (missingForFrankfurter.size > 0) {
+    const frankRes = await fetchFromFrankfurterFx(missingForFrankfurter);
+    upstreamCallsMade += frankRes.upstreamRequestsMade;
+    frankRes.patches.forEach((v, k) => mergedPatches.set(k, v));
   }
 
   const prevIndexMap = new Map(previous?.indices.map((i) => [i.id, i]) ?? []);
   const prevFxMap = new Map(previous?.fx.map((f) => [f.id, f]) ?? []);
   const prevCmdMap = new Map(previous?.commodities.map((c) => [c.id, c]) ?? []);
+
+  const liveSourcesUsed = new Set<DataSourceKind>();
+  let liveMappedCount = 0;
 
   // Build Indices
   const indices: EquityIndexAsset[] = INDEX_CATALOG.map((item) => {
@@ -400,47 +540,58 @@ export async function fetchFreshMarketData(
 
     let price: number;
     let prevClose: number;
+    let dayHigh: number;
+    let dayLow: number;
+    let changePercent: number;
+    let sparkline: number[];
+    let marketTime: number | null;
     let source: DataSourceKind;
 
     if (patch) {
       price = roundTo(patch.price, item.decimals);
       prevClose = roundTo(patch.prevClose ?? prev?.prevClose ?? item.baselinePrice, item.decimals);
-      source = patch.source;
-    } else {
-      const sim = evolveSimulatedPrice(
-        item.baselinePrice,
-        prev?.price,
-        item.volatility,
-        isOpen,
-        item.id
+      dayHigh = roundTo(
+        Math.max(patch.dayHigh ?? prev?.dayHigh ?? price, price),
+        item.decimals
       );
-      price = roundTo(sim.price, item.decimals);
-      prevClose = roundTo(prev?.prevClose ?? sim.prevClose, item.decimals);
+      dayLow = roundTo(
+        Math.min(patch.dayLow ?? prev?.dayLow ?? price, price),
+        item.decimals
+      );
+      changePercent =
+        patch.changePercent !== undefined
+          ? roundTo(patch.changePercent, 2)
+          : roundTo(((price - prevClose) / Math.max(prevClose, 1e-6)) * 100, 2);
+      sparkline =
+        patch.sparkline && patch.sparkline.length >= 2
+          ? patch.sparkline
+          : updateSparkline(prev?.sparkline, price, item.decimals);
+      marketTime = patch.marketTime ?? nowMs;
+      source = patch.source;
+      liveSourcesUsed.add(source);
+      liveMappedCount += 1;
+    } else if (prev && prev.source !== "simulation") {
+      // Preserve last authentic real quote if transient fetch missed
+      liveSourcesUsed.add(prev.source);
+      liveMappedCount += 1;
+      return { ...prev, isOpen, sessionLabel: isOpen ? "개장중" : "장마감" };
+    } else {
+      price = roundTo(item.baselinePrice, item.decimals);
+      prevClose = price;
+      dayHigh = price;
+      dayLow = price;
+      changePercent = 0;
+      sparkline = [price, price];
+      marketTime = null;
       source = "simulation";
     }
 
     const change = roundTo(price - prevClose, item.decimals);
-    const changePercent =
-      patch?.changePercent !== undefined
-        ? roundTo(patch.changePercent, 2)
-        : roundTo((change / Math.max(prevClose, 1e-6)) * 100, 2);
-
-    const dayHigh = roundTo(
-      Math.max(patch?.dayHigh ?? prev?.dayHigh ?? price * 1.004, price),
-      item.decimals
-    );
-    const dayLow = roundTo(
-      Math.min(patch?.dayLow ?? prev?.dayLow ?? price * 0.996, price),
-      item.decimals
-    );
-
-    const sparkline = prev?.sparkline
-      ? updateSparkline(prev.sparkline, price, item.decimals)
-      : generateInitialSparkline(prevClose, price, item.volatility, item.id, item.decimals);
 
     return {
       id: item.id,
       symbol: item.symbol,
+      feedSymbol: item.yahooSymbol,
       name: item.name,
       nameKo: item.nameKo,
       category: "index",
@@ -464,6 +615,7 @@ export async function fetchFreshMarketData(
       unit: "pts",
       sparkline,
       updatedAt: nowMs,
+      marketTime,
       source,
     };
   });
@@ -476,47 +628,57 @@ export async function fetchFreshMarketData(
 
     let price: number;
     let prevClose: number;
+    let dayHigh: number;
+    let dayLow: number;
+    let changePercent: number;
+    let sparkline: number[];
+    let marketTime: number | null;
     let source: DataSourceKind;
 
     if (patch) {
       price = roundTo(patch.price, item.decimals);
       prevClose = roundTo(patch.prevClose ?? prev?.prevClose ?? item.baselineRate, item.decimals);
-      source = patch.source;
-    } else {
-      const sim = evolveSimulatedPrice(
-        item.baselineRate,
-        prev?.price,
-        item.volatility,
-        fxOpen,
-        item.id
+      dayHigh = roundTo(
+        Math.max(patch.dayHigh ?? prev?.dayHigh ?? price, price),
+        item.decimals
       );
-      price = roundTo(sim.price, item.decimals);
-      prevClose = roundTo(prev?.prevClose ?? sim.prevClose, item.decimals);
+      dayLow = roundTo(
+        Math.min(patch.dayLow ?? prev?.dayLow ?? price, price),
+        item.decimals
+      );
+      changePercent =
+        patch.changePercent !== undefined
+          ? roundTo(patch.changePercent, 2)
+          : roundTo(((price - prevClose) / Math.max(prevClose, 1e-6)) * 100, 2);
+      sparkline =
+        patch.sparkline && patch.sparkline.length >= 2
+          ? patch.sparkline
+          : updateSparkline(prev?.sparkline, price, item.decimals);
+      marketTime = patch.marketTime ?? nowMs;
+      source = patch.source;
+      liveSourcesUsed.add(source);
+      liveMappedCount += 1;
+    } else if (prev && prev.source !== "simulation") {
+      liveSourcesUsed.add(prev.source);
+      liveMappedCount += 1;
+      return { ...prev, isOpen: fxOpen };
+    } else {
+      price = roundTo(item.baselineRate, item.decimals);
+      prevClose = price;
+      dayHigh = price;
+      dayLow = price;
+      changePercent = 0;
+      sparkline = [price, price];
+      marketTime = null;
       source = "simulation";
     }
 
     const change = roundTo(price - prevClose, item.decimals);
-    const changePercent =
-      patch?.changePercent !== undefined
-        ? roundTo(patch.changePercent, 2)
-        : roundTo((change / Math.max(prevClose, 1e-6)) * 100, 2);
-
-    const dayHigh = roundTo(
-      Math.max(patch?.dayHigh ?? prev?.dayHigh ?? price * 1.003, price),
-      item.decimals
-    );
-    const dayLow = roundTo(
-      Math.min(patch?.dayLow ?? prev?.dayLow ?? price * 0.997, price),
-      item.decimals
-    );
-
-    const sparkline = prev?.sparkline
-      ? updateSparkline(prev.sparkline, price, item.decimals)
-      : generateInitialSparkline(prevClose, price, item.volatility, item.id, item.decimals);
 
     return {
       id: item.id,
       symbol: item.symbol,
+      feedSymbol: item.yahooSymbol,
       name: item.name,
       nameKo: item.nameKo,
       category: "fx",
@@ -541,6 +703,7 @@ export async function fetchFreshMarketData(
       unit: item.quoteCurrency,
       sparkline,
       updatedAt: nowMs,
+      marketTime,
       source,
     };
   });
@@ -552,47 +715,57 @@ export async function fetchFreshMarketData(
 
     let price: number;
     let prevClose: number;
+    let dayHigh: number;
+    let dayLow: number;
+    let changePercent: number;
+    let sparkline: number[];
+    let marketTime: number | null;
     let source: DataSourceKind;
 
     if (patch) {
       price = roundTo(patch.price, item.decimals);
       prevClose = roundTo(patch.prevClose ?? prev?.prevClose ?? item.baselinePrice, item.decimals);
-      source = patch.source;
-    } else {
-      const sim = evolveSimulatedPrice(
-        item.baselinePrice,
-        prev?.price,
-        item.volatility,
-        fxOpen,
-        item.id
+      dayHigh = roundTo(
+        Math.max(patch.dayHigh ?? prev?.dayHigh ?? price, price),
+        item.decimals
       );
-      price = roundTo(sim.price, item.decimals);
-      prevClose = roundTo(prev?.prevClose ?? sim.prevClose, item.decimals);
+      dayLow = roundTo(
+        Math.min(patch.dayLow ?? prev?.dayLow ?? price, price),
+        item.decimals
+      );
+      changePercent =
+        patch.changePercent !== undefined
+          ? roundTo(patch.changePercent, 2)
+          : roundTo(((price - prevClose) / Math.max(prevClose, 1e-6)) * 100, 2);
+      sparkline =
+        patch.sparkline && patch.sparkline.length >= 2
+          ? patch.sparkline
+          : updateSparkline(prev?.sparkline, price, item.decimals);
+      marketTime = patch.marketTime ?? nowMs;
+      source = patch.source;
+      liveSourcesUsed.add(source);
+      liveMappedCount += 1;
+    } else if (prev && prev.source !== "simulation") {
+      liveSourcesUsed.add(prev.source);
+      liveMappedCount += 1;
+      return { ...prev, isOpen: fxOpen };
+    } else {
+      price = roundTo(item.baselinePrice, item.decimals);
+      prevClose = price;
+      dayHigh = price;
+      dayLow = price;
+      changePercent = 0;
+      sparkline = [price, price];
+      marketTime = null;
       source = "simulation";
     }
 
     const change = roundTo(price - prevClose, item.decimals);
-    const changePercent =
-      patch?.changePercent !== undefined
-        ? roundTo(patch.changePercent, 2)
-        : roundTo((change / Math.max(prevClose, 1e-6)) * 100, 2);
-
-    const dayHigh = roundTo(
-      Math.max(patch?.dayHigh ?? prev?.dayHigh ?? price * 1.006, price),
-      item.decimals
-    );
-    const dayLow = roundTo(
-      Math.min(patch?.dayLow ?? prev?.dayLow ?? price * 0.994, price),
-      item.decimals
-    );
-
-    const sparkline = prev?.sparkline
-      ? updateSparkline(prev.sparkline, price, item.decimals)
-      : generateInitialSparkline(prevClose, price, item.volatility, item.id, item.decimals);
 
     return {
       id: item.id,
       symbol: item.symbol,
+      feedSymbol: item.yahooSymbol,
       name: item.name,
       nameKo: item.nameKo,
       category: "commodity",
@@ -613,17 +786,16 @@ export async function fetchFreshMarketData(
       unit: item.unit,
       sparkline,
       updatedAt: nowMs,
+      marketTime,
       source,
     };
   });
 
   let activeSource: DataSourceKind = "simulation";
-  if (sourcesUsed.size > 1) {
+  if (liveSourcesUsed.size > 1) {
     activeSource = "hybrid";
-  } else if (sourcesUsed.has("polygon")) {
-    activeSource = "polygon";
-  } else if (sourcesUsed.has("finnhub")) {
-    activeSource = "finnhub";
+  } else if (liveSourcesUsed.size === 1) {
+    activeSource = [...liveSourcesUsed][0];
   }
 
   return {
@@ -631,6 +803,7 @@ export async function fetchFreshMarketData(
     fx,
     commodities,
     activeSource,
+    liveMappedCount,
     upstreamCallsMade,
   };
 }

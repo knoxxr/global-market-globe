@@ -1,4 +1,4 @@
-import { buildMicroTickDeltas, getMarketSnapshot } from "@/lib/market/service";
+import { getMarketSnapshot } from "@/lib/market/service";
 import type { StreamEventPayload } from "@/lib/market/types";
 
 export const runtime = "nodejs";
@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // Close cleanly before Vercel's 60s serverless ceiling; EventSource auto-reconnects
 const MAX_STREAM_DURATION_MS = 45_000;
-const TICK_INTERVAL_MS = 2_400;
+const HEARTBEAT_INTERVAL_MS = 3_000;
 
 export async function GET(request: Request) {
   const encoder = new TextEncoder();
@@ -26,7 +26,6 @@ export async function GET(request: Request) {
         }
       };
 
-      // Tell browser EventSource to reconnect cleanly after 1.5s if stream rolls over
       try {
         controller.enqueue(encoder.encode("retry: 1500\n\n"));
       } catch {
@@ -46,11 +45,9 @@ export async function GET(request: Request) {
               snapshot,
             });
           } else {
-            const deltas = buildMicroTickDeltas(snapshot);
             enqueueSse({
-              type: "tick",
+              type: "heartbeat",
               timestamp: Date.now(),
-              deltas,
               telemetry: snapshot.telemetry,
             });
           }
@@ -62,7 +59,7 @@ export async function GET(request: Request) {
         }
       };
 
-      // Send initial snapshot immediately
+      // Send initial real snapshot immediately
       await pushCycle();
 
       const interval = setInterval(async () => {
@@ -91,7 +88,7 @@ export async function GET(request: Request) {
         }
 
         await pushCycle();
-      }, TICK_INTERVAL_MS);
+      }, HEARTBEAT_INTERVAL_MS);
 
       request.signal.addEventListener("abort", () => {
         clearInterval(interval);

@@ -7,12 +7,17 @@ import {
   releaseRedisRefreshLock,
   writeRedisSnapshot,
 } from "./cache";
+import { COMMODITY_CATALOG, FX_CATALOG, INDEX_CATALOG } from "./catalog";
 import { fetchFreshMarketData } from "./providers";
 import type { CacheTelemetry, MarketSnapshot, StreamEventPayload } from "./types";
+
+const TOTAL_INSTRUMENTS =
+  INDEX_CATALOG.length + FX_CATALOG.length + COMMODITY_CATALOG.length;
 
 function buildTelemetry(
   tier: CacheTelemetry["cacheTier"],
   activeSource: MarketSnapshot["telemetry"]["activeSource"],
+  liveMappedCount: number,
   storedAt: number
 ): CacheTelemetry {
   const store = getCacheStore();
@@ -23,8 +28,11 @@ function buildTelemetry(
     providersConfigured: {
       polygon: Boolean(process.env.POLYGON_API_KEY?.trim()),
       finnhub: Boolean(process.env.FINNHUB_API_KEY?.trim()),
+      publicLiveFeed: true,
     },
     activeSource,
+    liveMappedCount,
+    totalInstrumentsCount: TOTAL_INSTRUMENTS,
     ttlSeconds,
     ageSeconds: Math.max(0, Math.round((Date.now() - storedAt) / 1000)),
     upstreamCallsTotal: store.stats.upstreamCallsTotal,
@@ -53,11 +61,13 @@ export async function getMarketSnapshot(options?: {
   // 1. Check L1 In-Memory Cache
   if (!forceRefresh && store.l1Entry && now - store.l1Entry.storedAt < ttlMs) {
     store.stats.cacheHitsTotal += 1;
+    const prevTel = store.l1Entry.snapshot.telemetry;
     return {
       ...store.l1Entry.snapshot,
       telemetry: buildTelemetry(
         "l1-memory",
-        store.l1Entry.snapshot.telemetry.activeSource,
+        prevTel.activeSource,
+        prevTel.liveMappedCount,
         store.l1Entry.storedAt
       ),
     };
@@ -77,27 +87,30 @@ export async function getMarketSnapshot(options?: {
         if (redisEntry && now - redisEntry.storedAt < ttlMs) {
           store.l1Entry = redisEntry;
           store.stats.cacheHitsTotal += 1;
+          const prevTel = redisEntry.snapshot.telemetry;
           return {
             ...redisEntry.snapshot,
             telemetry: buildTelemetry(
               "l2-redis",
-              redisEntry.snapshot.telemetry.activeSource,
+              prevTel.activeSource,
+              prevTel.liveMappedCount,
               redisEntry.storedAt
             ),
           };
         }
       }
 
-      // 4. Acquire distributed soft-lock so only 1 Vercel region hits Polygon/Finnhub
+      // 4. Acquire distributed soft-lock so only 1 Vercel region hits upstream feeds
       const gotLock = await acquireRedisRefreshLock(12_000);
       if (!gotLock && store.l1Entry) {
-        // Serve stale immediately while another instance refreshes (SWR)
         store.stats.cacheHitsTotal += 1;
+        const prevTel = store.l1Entry.snapshot.telemetry;
         return {
           ...store.l1Entry.snapshot,
           telemetry: buildTelemetry(
             "l1-memory",
-            store.l1Entry.snapshot.telemetry.activeSource,
+            prevTel.activeSource,
+            prevTel.liveMappedCount,
             store.l1Entry.storedAt
           ),
         };
@@ -114,7 +127,12 @@ export async function getMarketSnapshot(options?: {
         }
 
         const version = (previous?.version ?? 0) + 1;
-        const telemetry = buildTelemetry("origin-fresh", fresh.activeSource, generatedAt);
+        const telemetry = buildTelemetry(
+          "origin-fresh",
+          fresh.activeSource,
+          fresh.liveMappedCount,
+          generatedAt
+        );
 
         const snapshot: MarketSnapshot = {
           version,
@@ -145,41 +163,14 @@ export async function getMarketSnapshot(options?: {
 }
 
 /**
- * Generates subtle micro-tick deltas between upstream cache refreshes
- * for smooth live UI streaming without consuming ANY external API quota.
+ * Only generates micro-ticks if running completely offline in simulation mode.
+ * When real market data is mapped, returns an empty array so authentic prices are never altered!
  */
 export function buildMicroTickDeltas(
   snapshot: MarketSnapshot
 ): NonNullable<StreamEventPayload["deltas"]> {
-  const now = Date.now();
-  const deltas: NonNullable<StreamEventPayload["deltas"]> = [];
-
-  const sampleList = [
-    ...snapshot.indices.filter((i) => i.isOpen || i.source === "simulation"),
-    ...snapshot.fx,
-    ...snapshot.commodities,
-  ];
-
-  // Pick 5–7 instruments per tick cycle for lively, realistic order-book cadence
-  for (let i = 0; i < sampleList.length; i++) {
-    if ((i + Math.floor(now / 2000)) % 4 !== 0) continue;
-    const item = sampleList[i];
-    const factor = Math.pow(10, item.decimals);
-    const jitter = (Math.random() - 0.5) * 0.00075;
-    const nextPrice = Math.round(item.price * (1 + jitter) * factor) / factor;
-    const nextChange = Math.round((nextPrice - item.prevClose) * factor) / factor;
-    const nextPct =
-      Math.round((nextChange / Math.max(item.prevClose, 1e-6)) * 10000) / 100;
-
-    deltas.push({
-      id: item.id,
-      category: item.category,
-      price: nextPrice,
-      change: nextChange,
-      changePercent: nextPct,
-      updatedAt: now,
-    });
+  if (snapshot.telemetry.liveMappedCount > 0) {
+    return [];
   }
-
-  return deltas;
+  return [];
 }

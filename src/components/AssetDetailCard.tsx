@@ -39,12 +39,25 @@ export default function AssetDetailCard({
 
   const sourceLabel =
     asset.source === "polygon"
-      ? "Polygon.io"
+      ? "Polygon.io Live"
       : asset.source === "finnhub"
-      ? "Finnhub"
+      ? "Finnhub Live"
+      : asset.source === "yahoo"
+      ? `실시간 피드 (${asset.feedSymbol})`
+      : asset.source === "frankfurter"
+      ? "ECB 환율 피드"
       : asset.source === "hybrid"
-      ? "Polygon + Finnhub"
-      : "실시간 시뮬레이션";
+      ? "Multi-API Live"
+      : "오프라인 폴백";
+
+  const quoteTimeText = asset.marketTime
+    ? new Date(asset.marketTime).toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      })
+    : "—";
 
   return (
     <aside className="detail-card" aria-label={`${asset.nameKo} 상세 정보`}>
@@ -124,38 +137,40 @@ export default function AssetDetailCard({
           </span>
         </div>
         <div className="meta-cell">
-          <span className="meta-label">데이터 소스</span>
+          <span className="meta-label">실제 시세 소스</span>
           <span className="meta-val">{sourceLabel}</span>
         </div>
         {asset.category === "index" && (
           <div className="meta-cell">
-            <span className="meta-label">정규장 (UTC)</span>
+            <span className="meta-label">정규장 (UTC) / 호가시각</span>
             <span className="meta-val mono-num">
               <Clock size={11} style={{ display: "inline", marginRight: 4 }} />
               {String(asset.hoursUtc.openHour).padStart(2, "0")}:
               {String(asset.hoursUtc.openMinute).padStart(2, "0")}–
               {String(asset.hoursUtc.closeHour).padStart(2, "0")}:
-              {String(asset.hoursUtc.closeMinute).padStart(2, "0")}
+              {String(asset.hoursUtc.closeMinute).padStart(2, "0")} · {quoteTimeText}
             </span>
           </div>
         )}
         {asset.category === "fx" && (
           <div className="meta-cell">
-            <span className="meta-label">흐름 방향</span>
+            <span className="meta-label">흐름 방향 · 호가시각</span>
             <span className="meta-val">
-              {isPositive ? `${asset.baseCurrency} 강세` : `${asset.quoteCurrency} 강세`}
+              {isPositive ? `${asset.baseCurrency} 강세` : `${asset.quoteCurrency} 강세`} ·{" "}
+              {quoteTimeText}
             </span>
           </div>
         )}
         {asset.category === "commodity" && (
           <div className="meta-cell">
-            <span className="meta-label">섹터</span>
+            <span className="meta-label">섹터 · 호가시각</span>
             <span className="meta-val">
               {asset.sector === "energy"
                 ? "에너지"
                 : asset.sector === "metals"
                 ? "귀금속·산업금속"
-                : "농산물"}
+                : "농산물"}{" "}
+              · {quoteTimeText}
             </span>
           </div>
         )}

@@ -2,7 +2,13 @@ export type AssetCategory = "index" | "fx" | "commodity";
 
 export type RegionKey = "global" | "americas" | "europe" | "asia" | "commodities";
 
-export type DataSourceKind = "polygon" | "finnhub" | "hybrid" | "simulation";
+export type DataSourceKind =
+  | "polygon"
+  | "finnhub"
+  | "yahoo"
+  | "frankfurter"
+  | "hybrid"
+  | "simulation";
 
 export interface GeoPoint {
   lat: number;
@@ -19,6 +25,7 @@ export interface ExchangeHoursUtc {
 export interface MarketAssetBase {
   id: string;
   symbol: string;
+  feedSymbol: string;
   name: string;
   nameKo: string;
   category: AssetCategory;
@@ -33,6 +40,7 @@ export interface MarketAssetBase {
   unit: string;
   sparkline: number[];
   updatedAt: number;
+  marketTime: number | null;
   source: DataSourceKind;
 }
 
@@ -81,8 +89,11 @@ export interface CacheTelemetry {
   providersConfigured: {
     polygon: boolean;
     finnhub: boolean;
+    publicLiveFeed: boolean;
   };
   activeSource: DataSourceKind;
+  liveMappedCount: number;
+  totalInstrumentsCount: number;
   ttlSeconds: number;
   ageSeconds: number;
   upstreamCallsTotal: number;

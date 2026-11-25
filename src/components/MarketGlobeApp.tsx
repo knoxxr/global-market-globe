@@ -80,44 +80,21 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
     flashTimersRef.current.set(id, timer);
   }, []);
 
-  // Apply micro-tick deltas cleanly onto current snapshot state
-  const applyDeltas = useCallback(
-    (
-      deltas: NonNullable<StreamEventPayload["deltas"]>,
-      nextTelemetry?: MarketSnapshot["telemetry"]
-    ) => {
-      const deltaMap = new Map(deltas.map((d) => [d.id, d]));
+  // Apply authentic incoming snapshot and flash any instruments whose real price changed
+  const applyIncomingSnapshot = useCallback(
+    (incoming: MarketSnapshot) => {
       setSnapshot((prev) => {
-        const updateList = <T extends AnyMarketAsset>(list: T[]): T[] =>
-          list.map((item) => {
-            const d = deltaMap.get(item.id);
-            if (!d) return item;
-            if (d.price !== item.price) {
-              triggerFlash(item.id, d.price > item.price ? "up" : "down");
-            }
-            const nextSpark =
-              item.sparkline.length > 0
-                ? [...item.sparkline.slice(-23), d.price]
-                : [d.price];
-            return {
-              ...item,
-              price: d.price,
-              change: d.change,
-              changePercent: d.changePercent,
-              dayHigh: Math.max(item.dayHigh, d.price),
-              dayLow: Math.min(item.dayLow, d.price),
-              sparkline: nextSpark,
-              updatedAt: d.updatedAt,
-            };
-          });
-
-        return {
-          ...prev,
-          indices: updateList(prev.indices),
-          fx: updateList(prev.fx),
-          commodities: updateList(prev.commodities),
-          telemetry: nextTelemetry ?? prev.telemetry,
-        };
+        const prevPrices = new Map<string, number>();
+        for (const item of [...prev.indices, ...prev.fx, ...prev.commodities]) {
+          prevPrices.set(item.id, item.price);
+        }
+        for (const item of [...incoming.indices, ...incoming.fx, ...incoming.commodities]) {
+          const oldPrice = prevPrices.get(item.id);
+          if (oldPrice !== undefined && oldPrice !== item.price) {
+            triggerFlash(item.id, item.price > oldPrice ? "up" : "down");
+          }
+        }
+        return incoming;
       });
     },
     [triggerFlash]
@@ -146,7 +123,7 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
         if (!res.ok) return;
         const data = (await res.json()) as MarketSnapshot;
         if (!isDisposed) {
-          setSnapshot(data);
+          applyIncomingSnapshot(data);
           setConnectionStatus("polling");
         }
       } catch {
@@ -178,10 +155,13 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
         try {
           const payload = JSON.parse(event.data) as StreamEventPayload;
           if (payload.type === "snapshot" && payload.snapshot) {
-            setSnapshot(payload.snapshot);
+            applyIncomingSnapshot(payload.snapshot);
             setConnectionStatus("live");
-          } else if (payload.type === "tick" && payload.deltas) {
-            applyDeltas(payload.deltas, payload.telemetry);
+          } else if (payload.type === "heartbeat" && payload.telemetry) {
+            setSnapshot((prev) => ({
+              ...prev,
+              telemetry: payload.telemetry ?? prev.telemetry,
+            }));
             setConnectionStatus("live");
           }
         } catch {
@@ -189,7 +169,6 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
         }
       };
       es.onerror = () => {
-        // EventSource automatically reconnects after retry window; refresh via Edge CDN once as safety net
         if (!isDisposed) {
           fetchCdnSnapshot();
         }
@@ -214,7 +193,7 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
       document.removeEventListener("visibilitychange", handleVisibility);
       cleanup();
     };
-  }, [transportMode, applyDeltas]);
+  }, [transportMode, applyIncomingSnapshot]);
 
   useEffect(() => {
     const timers = flashTimersRef.current;
@@ -266,7 +245,6 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
       }
       setSelectedAssetId(asset.id);
       focusAssetOnGlobe(asset);
-      // On mobile, smoothly raise sheet to half to show crisp AssetDetailCard
       if (typeof window !== "undefined" && window.innerWidth < 1024) {
         setMobileSheet("half");
       }
@@ -299,10 +277,8 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
     sheetTouchStartYRef.current = null;
     if (Math.abs(dy) < 28) return;
     if (dy < 0) {
-      // Swipe up
       setMobileSheet((prev) => (prev === "peek" ? "half" : "full"));
     } else {
-      // Swipe down
       setMobileSheet((prev) => (prev === "full" ? "half" : "peek"));
     }
   };
@@ -318,7 +294,10 @@ export default function MarketGlobeApp({ initialSnapshot }: MarketGlobeAppProps)
       ? "FINNHUB LIVE"
       : snapshot.telemetry.activeSource === "hybrid"
       ? "MULTI-API LIVE"
-      : "DEMO STREAM";
+      : snapshot.telemetry.activeSource === "yahoo" ||
+        snapshot.telemetry.activeSource === "frankfurter"
+      ? `LIVE ${snapshot.telemetry.liveMappedCount}/${snapshot.telemetry.totalInstrumentsCount}`
+      : "OFFLINE";
 
   return (
     <main className="app-shell">

@@ -43,16 +43,16 @@ cp .env.example .env.local
 npm run dev
 ```
 
-API 키를 설정하지 않아도 **세션 인식 실시간 시뮬레이션 모드(`DEMO STREAM`)**로 즉시 동작합니다.
+별도 API 키를 설정하지 않아도 **31개 글로벌 주가지수(`^GSPC`, `^KS11`, `^N225` 등) · 실시간 외환(`KRW=X`, `EURUSD=X` 등) · 원자재 선물(`GC=F`, `CL=F`, `BZ=F`, `PL=F` 등) 실제 시세 및 15분봉 일중 차트**가 자동 매핑됩니다.
 
 ## Vercel 배포 가이드
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/import?s=https://github.com/knoxxr/global-market-globe)
 
 1. 위 **Deploy with Vercel** 버튼을 클릭하거나 Vercel 대시보드에서 `knoxxr/global-market-globe` 저장소를 Import합니다.
-2. **Environment Variables** 설정 (`.env.example` 참고 — 선택 사항, 미설정 시 즉시 데모 스트림으로 동작):
-   - `POLYGON_API_KEY` (선택): Polygon.io API 키
-   - `FINNHUB_API_KEY` (선택): Finnhub API 키
+2. **Environment Variables** 설정 (`.env.example` 참고 — 선택 사항, 미설정 시에도 31개 실데이터 피드로 즉시 동작):
+   - `POLYGON_API_KEY` (선택): Polygon.io API 키 (설정 시 1순위 배치 스냅샷 적용)
+   - `FINNHUB_API_KEY` (선택): Finnhub API 키 (설정 시 2순위 벌크 FX + OANDA 원자재 적용)
    - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (권장): Vercel Marketplace에서 Upstash Redis 연결 시 전 세계 리전이 단일 캐시를 공유
    - `MARKET_CACHE_TTL_SECONDS`: 글로벌 업스트림 갱신 최소 간격 (기본 `20`초)
    - `CRON_SECRET` (선택): Vercel Pro 이상에서 `/api/cron/refresh` 크론 프리워머를 추가할 때 보호용 토큰
