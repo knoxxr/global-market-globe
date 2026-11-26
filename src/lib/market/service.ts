@@ -7,12 +7,15 @@ import {
   releaseRedisRefreshLock,
   writeRedisSnapshot,
 } from "./cache";
-import { COMMODITY_CATALOG, FX_CATALOG, INDEX_CATALOG } from "./catalog";
+import { COMMODITY_CATALOG, FX_CATALOG, INDEX_CATALOG, MACRO_CATALOG } from "./catalog";
 import { fetchFreshMarketData } from "./providers";
 import type { CacheTelemetry, MarketSnapshot, StreamEventPayload } from "./types";
 
 const TOTAL_INSTRUMENTS =
-  INDEX_CATALOG.length + FX_CATALOG.length + COMMODITY_CATALOG.length;
+  INDEX_CATALOG.length +
+  FX_CATALOG.length +
+  COMMODITY_CATALOG.length +
+  MACRO_CATALOG.length;
 
 function buildTelemetry(
   tier: CacheTelemetry["cacheTier"],
@@ -43,13 +46,6 @@ function buildTelemetry(
   };
 }
 
-/**
- * Multi-User Safe Market Snapshot Orchestrator:
- * 1. L1 Memory Cache (instant, 0ms, 0 external calls)
- * 2. L2 Upstash Redis Cache (shared across all Vercel serverless instances & regions)
- * 3. Singleflight Coalescing (concurrent misses collapse into 1 Promise)
- * 4. Distributed Soft-Lock (prevents cross-region thundering herd)
- */
 export async function getMarketSnapshot(options?: {
   forceRefresh?: boolean;
 }): Promise<MarketSnapshot> {
@@ -58,7 +54,6 @@ export async function getMarketSnapshot(options?: {
   const now = Date.now();
   const forceRefresh = Boolean(options?.forceRefresh);
 
-  // 1. Check L1 In-Memory Cache
   if (!forceRefresh && store.l1Entry && now - store.l1Entry.storedAt < ttlMs) {
     store.stats.cacheHitsTotal += 1;
     const prevTel = store.l1Entry.snapshot.telemetry;
@@ -73,7 +68,6 @@ export async function getMarketSnapshot(options?: {
     };
   }
 
-  // 2. Singleflight: if a refresh is already running on this instance, join it
   if (store.inflight) {
     store.stats.coalescedRequestsTotal += 1;
     return store.inflight;
@@ -81,10 +75,9 @@ export async function getMarketSnapshot(options?: {
 
   const refreshPromise = (async (): Promise<MarketSnapshot> => {
     try {
-      // 3. Check L2 Shared Upstash Redis Cache before hitting upstream APIs
       if (!forceRefresh) {
         const redisEntry = await readRedisSnapshot();
-        if (redisEntry && now - redisEntry.storedAt < ttlMs) {
+        if (redisEntry && now - redisEntry.storedAt < ttlMs && redisEntry.snapshot.macro) {
           store.l1Entry = redisEntry;
           store.stats.cacheHitsTotal += 1;
           const prevTel = redisEntry.snapshot.telemetry;
@@ -100,7 +93,6 @@ export async function getMarketSnapshot(options?: {
         }
       }
 
-      // 4. Acquire distributed soft-lock so only 1 Vercel region hits upstream feeds
       const gotLock = await acquireRedisRefreshLock(12_000);
       if (!gotLock && store.l1Entry) {
         store.stats.cacheHitsTotal += 1;
@@ -140,6 +132,8 @@ export async function getMarketSnapshot(options?: {
           indices: fresh.indices,
           fx: fresh.fx,
           commodities: fresh.commodities,
+          macro: fresh.macro,
+          riskRegime: fresh.riskRegime,
           telemetry,
         };
 

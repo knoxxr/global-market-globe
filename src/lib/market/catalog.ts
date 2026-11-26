@@ -11,6 +11,8 @@ export interface IndexCatalogItem {
   city: string;
   cityKo: string;
   countryCode: string;
+  /** ISO 3166-1 numeric code matching world-atlas/countries-50m.json feature.id */
+  isoNumeric: string;
   currency: string;
   region: Exclude<RegionKey, "global" | "commodities">;
   coords: GeoPoint;
@@ -18,7 +20,6 @@ export interface IndexCatalogItem {
   decimals: number;
   volatility: number;
   hoursUtc: ExchangeHoursUtc;
-  /** ETF proxy fallback for Polygon/Finnhub plans without global index tier */
   polygonProxyTicker: string;
   proxyMultiplier: number;
   finnhubSymbol: string;
@@ -67,6 +68,29 @@ export interface CommodityCatalogItem {
   finnhubSymbol: string;
 }
 
+export interface MacroCatalogItem {
+  id: string;
+  symbol: string;
+  yahooSymbol: string;
+  name: string;
+  nameKo: string;
+  baselinePrice: number;
+  decimals: number;
+  unit: string;
+}
+
+export interface SessionRelayItem {
+  id: string;
+  labelKo: string;
+  exchange: string;
+  openHourUtc: number;
+  openMinuteUtc: number;
+  closeHourUtc: number;
+  closeMinuteUtc: number;
+  coords: GeoPoint;
+  color: string;
+}
+
 export const REGION_PRESETS: Record<
   RegionKey,
   { labelKo: string; labelEn: string; lat: number; lng: number; distance: number }
@@ -77,6 +101,107 @@ export const REGION_PRESETS: Record<
   asia: { labelKo: "아시아", labelEn: "Asia-Pac", lat: 24, lng: 118, distance: 2.25 },
   commodities: { labelKo: "원자재", labelEn: "Resources", lat: 5, lng: 35, distance: 2.65 },
 };
+
+export const SESSION_RELAY_BLOCKS: SessionRelayItem[] = [
+  {
+    id: "sess-sydney",
+    labelKo: "시드니",
+    exchange: "ASX",
+    openHourUtc: 0,
+    openMinuteUtc: 0,
+    closeHourUtc: 6,
+    closeMinuteUtc: 0,
+    coords: { lat: -33.8688, lng: 151.2093 },
+    color: "#38bdf8",
+  },
+  {
+    id: "sess-seoul-tokyo",
+    labelKo: "서울·도쿄",
+    exchange: "KRX/TSE",
+    openHourUtc: 0,
+    openMinuteUtc: 0,
+    closeHourUtc: 6,
+    closeMinuteUtc: 30,
+    coords: { lat: 36.6, lng: 133.2 },
+    color: "#10b981",
+  },
+  {
+    id: "sess-hk-shanghai",
+    labelKo: "홍콩·상하이",
+    exchange: "HKEX/SSE",
+    openHourUtc: 1,
+    openMinuteUtc: 30,
+    closeHourUtc: 8,
+    closeMinuteUtc: 0,
+    coords: { lat: 26.5, lng: 117.5 },
+    color: "#22d3ee",
+  },
+  {
+    id: "sess-europe",
+    labelKo: "런던·유럽",
+    exchange: "LSE/XETRA",
+    openHourUtc: 8,
+    openMinuteUtc: 0,
+    closeHourUtc: 16,
+    closeMinuteUtc: 30,
+    coords: { lat: 50.5, lng: 4.5 },
+    color: "#f59e0b",
+  },
+  {
+    id: "sess-ny",
+    labelKo: "뉴욕",
+    exchange: "NYSE/NASDAQ",
+    openHourUtc: 14,
+    openMinuteUtc: 30,
+    closeHourUtc: 21,
+    closeMinuteUtc: 0,
+    coords: { lat: 40.7128, lng: -74.006 },
+    color: "#34d399",
+  },
+];
+
+export const MACRO_CATALOG: MacroCatalogItem[] = [
+  {
+    id: "macro-vix",
+    symbol: "VIX",
+    yahooSymbol: "^VIX",
+    name: "CBOE Volatility Index",
+    nameKo: "공포지수 VIX",
+    baselinePrice: 28.29,
+    decimals: 2,
+    unit: "pts",
+  },
+  {
+    id: "macro-dxy",
+    symbol: "DXY",
+    yahooSymbol: "DX-Y.NYB",
+    name: "US Dollar Index",
+    nameKo: "달러인덱스",
+    baselinePrice: 103.7,
+    decimals: 2,
+    unit: "pts",
+  },
+  {
+    id: "macro-us10y",
+    symbol: "US10Y",
+    yahooSymbol: "^TNX",
+    name: "US 10Y Treasury Yield",
+    nameKo: "미 10년물 금리",
+    baselinePrice: 4.85,
+    decimals: 2,
+    unit: "%",
+  },
+  {
+    id: "macro-btc",
+    symbol: "BTC",
+    yahooSymbol: "BTC-USD",
+    name: "Bitcoin Spot",
+    nameKo: "비트코인",
+    baselinePrice: 60322,
+    decimals: 0,
+    unit: "USD",
+  },
+];
 
 export const INDEX_CATALOG: IndexCatalogItem[] = [
   {
@@ -90,6 +215,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "New York",
     cityKo: "뉴욕",
     countryCode: "US",
+    isoNumeric: "840",
     currency: "USD",
     region: "americas",
     coords: { lat: 40.7128, lng: -74.006 },
@@ -112,6 +238,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "New York",
     cityKo: "뉴욕",
     countryCode: "US",
+    isoNumeric: "840",
     currency: "USD",
     region: "americas",
     coords: { lat: 41.9, lng: -72.1 },
@@ -133,6 +260,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Toronto",
     cityKo: "토론토",
     countryCode: "CA",
+    isoNumeric: "124",
     currency: "CAD",
     region: "americas",
     coords: { lat: 43.6532, lng: -79.3832 },
@@ -154,6 +282,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "São Paulo",
     cityKo: "상파울루",
     countryCode: "BR",
+    isoNumeric: "076",
     currency: "BRL",
     region: "americas",
     coords: { lat: -23.5505, lng: -46.6333 },
@@ -175,6 +304,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "London",
     cityKo: "런던",
     countryCode: "GB",
+    isoNumeric: "826",
     currency: "GBP",
     region: "europe",
     coords: { lat: 51.5074, lng: -0.1278 },
@@ -196,6 +326,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Frankfurt",
     cityKo: "프랑크푸르트",
     countryCode: "DE",
+    isoNumeric: "276",
     currency: "EUR",
     region: "europe",
     coords: { lat: 50.1109, lng: 8.6821 },
@@ -217,6 +348,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Paris",
     cityKo: "파리",
     countryCode: "FR",
+    isoNumeric: "250",
     currency: "EUR",
     region: "europe",
     coords: { lat: 48.8566, lng: 2.3522 },
@@ -238,6 +370,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Zurich",
     cityKo: "취리히",
     countryCode: "CH",
+    isoNumeric: "756",
     currency: "CHF",
     region: "europe",
     coords: { lat: 47.3769, lng: 8.5417 },
@@ -259,6 +392,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Seoul",
     cityKo: "서울",
     countryCode: "KR",
+    isoNumeric: "410",
     currency: "KRW",
     region: "asia",
     coords: { lat: 37.5665, lng: 126.978 },
@@ -280,6 +414,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Tokyo",
     cityKo: "도쿄",
     countryCode: "JP",
+    isoNumeric: "392",
     currency: "JPY",
     region: "asia",
     coords: { lat: 35.6762, lng: 139.6503 },
@@ -301,6 +436,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Hong Kong",
     cityKo: "홍콩",
     countryCode: "HK",
+    isoNumeric: "344",
     currency: "HKD",
     region: "asia",
     coords: { lat: 22.3193, lng: 114.1694 },
@@ -322,6 +458,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Shanghai",
     cityKo: "상하이",
     countryCode: "CN",
+    isoNumeric: "156",
     currency: "CNY",
     region: "asia",
     coords: { lat: 31.2304, lng: 121.4737 },
@@ -343,6 +480,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Mumbai",
     cityKo: "뭄바이",
     countryCode: "IN",
+    isoNumeric: "356",
     currency: "INR",
     region: "asia",
     coords: { lat: 19.076, lng: 72.8777 },
@@ -364,6 +502,7 @@ export const INDEX_CATALOG: IndexCatalogItem[] = [
     city: "Sydney",
     cityKo: "시드니",
     countryCode: "AU",
+    isoNumeric: "036",
     currency: "AUD",
     region: "asia",
     coords: { lat: -33.8688, lng: 151.2093 },
@@ -732,6 +871,17 @@ export const COMMODITY_CATALOG: CommodityCatalogItem[] = [
   },
 ];
 
+const ALLOWED_HISTORY_SYMBOLS = new Set<string>([
+  ...INDEX_CATALOG.map((i) => i.yahooSymbol),
+  ...FX_CATALOG.map((f) => f.yahooSymbol),
+  ...COMMODITY_CATALOG.map((c) => c.yahooSymbol),
+  ...MACRO_CATALOG.map((m) => m.yahooSymbol),
+]);
+
+export function isAllowedHistorySymbol(symbol: string): boolean {
+  return ALLOWED_HISTORY_SYMBOLS.has(symbol);
+}
+
 export function isExchangeOpenUtc(hours: ExchangeHoursUtc, now: Date = new Date()): boolean {
   const day = now.getUTCDay();
   if (day === 0 || day === 6) return false;
@@ -747,7 +897,6 @@ export function isExchangeOpenUtc(hours: ExchangeHoursUtc, now: Date = new Date(
 export function isFxMarketOpenUtc(now: Date = new Date()): boolean {
   const day = now.getUTCDay();
   const hour = now.getUTCHours();
-  // FX trades 24/5: Sun 22:00 UTC -> Fri 22:00 UTC
   if (day === 6) return false;
   if (day === 0 && hour < 22) return false;
   if (day === 5 && hour >= 22) return false;

@@ -3,6 +3,7 @@ import {
   COMMODITY_CATALOG,
   FX_CATALOG,
   INDEX_CATALOG,
+  MACRO_CATALOG,
   isExchangeOpenUtc,
   isFxMarketOpenUtc,
 } from "./catalog";
@@ -12,7 +13,9 @@ import type {
   DataSourceKind,
   EquityIndexAsset,
   FxPairAsset,
+  MacroIndicator,
   MarketSnapshot,
+  RiskRegime,
 } from "./types";
 
 // Prefer IPv4 in Node 22 undici to avoid IPv6 ENETUNREACH timeouts on cloud VMs
@@ -389,7 +392,7 @@ async function fetchFromYahooBatch(
   const patches = new Map<string, QuotePatch>();
   if (targets.length === 0) return { patches, upstreamRequestsMade: 0 };
 
-  const chunkSize = 16;
+  const chunkSize = 18;
   const chunks: Array<typeof targets> = [];
   for (let i = 0; i < targets.length; i += chunkSize) {
     chunks.push(targets.slice(i, i + chunkSize));
@@ -448,12 +451,50 @@ async function fetchFromFrankfurterFx(missingIds: Set<string>): Promise<Provider
   return { patches, upstreamRequestsMade: 1 };
 }
 
+function computeRiskRegime(
+  indices: EquityIndexAsset[],
+  macro: MacroIndicator[]
+): RiskRegime {
+  // 1. Equity breadth (0..100)
+  const avgIdxPct =
+    indices.reduce((sum, i) => sum + i.changePercent, 0) / Math.max(indices.length, 1);
+  const advRatio =
+    indices.filter((i) => i.changePercent >= 0).length / Math.max(indices.length, 1);
+
+  // 2. VIX pressure (lower VIX = higher Risk-On)
+  const vix = macro.find((m) => m.symbol === "VIX");
+  const btc = macro.find((m) => m.symbol === "BTC");
+
+  let score = 50;
+  score += (advRatio - 0.5) * 44; // -22 .. +22
+  score += Math.max(-18, Math.min(18, avgIdxPct * 9)); // -18 .. +18
+  if (vix) {
+    // VIX 20 is baseline; higher pulls toward Risk-Off
+    score += Math.max(-18, Math.min(14, (20 - vix.price) * 1.1));
+    score += Math.max(-8, Math.min(8, -vix.changePercent * 0.9));
+  }
+  if (btc) {
+    score += Math.max(-6, Math.min(6, btc.changePercent * 1.2));
+  }
+
+  const clamped = Math.round(Math.max(5, Math.min(95, score)));
+  if (clamped >= 58) {
+    return { score: clamped, label: "RISK-ON", labelKo: "위험선호", tone: "up" };
+  }
+  if (clamped <= 42) {
+    return { score: clamped, label: "RISK-OFF", labelKo: "안전자산 선호", tone: "down" };
+  }
+  return { score: clamped, label: "NEUTRAL", labelKo: "중립 · 혼조", tone: "neutral" };
+}
+
 export async function fetchFreshMarketData(
   previous: MarketSnapshot | null
 ): Promise<{
   indices: EquityIndexAsset[];
   fx: FxPairAsset[];
   commodities: CommodityAsset[];
+  macro: MacroIndicator[];
+  riskRegime: RiskRegime;
   activeSource: DataSourceKind;
   liveMappedCount: number;
   upstreamCallsMade: number;
@@ -484,6 +525,11 @@ export async function fetchFreshMarketData(
       yahooSymbol: c.yahooSymbol,
       decimals: c.decimals,
     })),
+    ...MACRO_CATALOG.map((m) => ({
+      id: m.id,
+      yahooSymbol: m.yahooSymbol,
+      decimals: m.decimals,
+    })),
   ];
 
   // Tier 1: Polygon.io (if configured)
@@ -505,7 +551,7 @@ export async function fetchFreshMarketData(
     }
   }
 
-  // Tier 3: Real-Time Yahoo Finance v8 Chart Feed (maps all remaining real indices, FX, commodities + real sparklines)
+  // Tier 3: Real-Time Yahoo Finance v8 Batched Spark (all remaining 35 symbols in 2 calls!)
   if (!circuitOpen) {
     const missingForYahoo = allTargets.filter((t) => !mergedPatches.has(t.id));
     if (missingForYahoo.length > 0) {
@@ -528,6 +574,7 @@ export async function fetchFreshMarketData(
   const prevIndexMap = new Map(previous?.indices.map((i) => [i.id, i]) ?? []);
   const prevFxMap = new Map(previous?.fx.map((f) => [f.id, f]) ?? []);
   const prevCmdMap = new Map(previous?.commodities.map((c) => [c.id, c]) ?? []);
+  const prevMacroMap = new Map(previous?.macro?.map((m) => [m.id, m]) ?? []);
 
   const liveSourcesUsed = new Set<DataSourceKind>();
   let liveMappedCount = 0;
@@ -571,10 +618,9 @@ export async function fetchFreshMarketData(
       liveSourcesUsed.add(source);
       liveMappedCount += 1;
     } else if (prev && prev.source !== "simulation") {
-      // Preserve last authentic real quote if transient fetch missed
       liveSourcesUsed.add(prev.source);
       liveMappedCount += 1;
-      return { ...prev, isOpen, sessionLabel: isOpen ? "개장중" : "장마감" };
+      return { ...prev, isoNumeric: item.isoNumeric, isOpen, sessionLabel: isOpen ? "개장중" : "장마감" };
     } else {
       price = roundTo(item.baselinePrice, item.decimals);
       prevClose = price;
@@ -600,6 +646,7 @@ export async function fetchFreshMarketData(
       city: item.city,
       cityKo: item.cityKo,
       countryCode: item.countryCode,
+      isoNumeric: item.isoNumeric,
       currency: item.currency,
       coords: item.coords,
       isOpen,
@@ -791,6 +838,62 @@ export async function fetchFreshMarketData(
     };
   });
 
+  // Build Macro Risk Indicators (VIX, DXY, US10Y, BTC)
+  const macro: MacroIndicator[] = MACRO_CATALOG.map((item) => {
+    const prev = prevMacroMap.get(item.id);
+    const patch = mergedPatches.get(item.id);
+
+    let price: number;
+    let prevClose: number;
+    let changePercent: number;
+    let sparkline: number[];
+    let source: DataSourceKind;
+
+    if (patch) {
+      price = roundTo(patch.price, item.decimals);
+      prevClose = roundTo(patch.prevClose ?? prev?.prevClose ?? item.baselinePrice, item.decimals);
+      changePercent =
+        patch.changePercent !== undefined
+          ? roundTo(patch.changePercent, 2)
+          : roundTo(((price - prevClose) / Math.max(prevClose, 1e-6)) * 100, 2);
+      sparkline =
+        patch.sparkline && patch.sparkline.length >= 2
+          ? patch.sparkline
+          : updateSparkline(prev?.sparkline, price, item.decimals);
+      source = patch.source;
+      liveSourcesUsed.add(source);
+      liveMappedCount += 1;
+    } else if (prev && prev.source !== "simulation") {
+      liveSourcesUsed.add(prev.source);
+      liveMappedCount += 1;
+      return prev;
+    } else {
+      price = roundTo(item.baselinePrice, item.decimals);
+      prevClose = price;
+      changePercent = 0;
+      sparkline = [price, price];
+      source = "simulation";
+    }
+
+    return {
+      id: item.id,
+      symbol: item.symbol,
+      feedSymbol: item.yahooSymbol,
+      name: item.name,
+      nameKo: item.nameKo,
+      price,
+      prevClose,
+      change: roundTo(price - prevClose, item.decimals),
+      changePercent,
+      decimals: item.decimals,
+      unit: item.unit,
+      sparkline,
+      source,
+    };
+  });
+
+  const riskRegime = computeRiskRegime(indices, macro);
+
   let activeSource: DataSourceKind = "simulation";
   if (liveSourcesUsed.size > 1) {
     activeSource = "hybrid";
@@ -802,6 +905,8 @@ export async function fetchFreshMarketData(
     indices,
     fx,
     commodities,
+    macro,
+    riskRegime,
     activeSource,
     liveMappedCount,
     upstreamCallsMade,

@@ -10,6 +10,8 @@ export type DataSourceKind =
   | "hybrid"
   | "simulation";
 
+export type HistoryRange = "1D" | "1W" | "1M" | "3M";
+
 export interface GeoPoint {
   lat: number;
   lng: number;
@@ -50,6 +52,7 @@ export interface EquityIndexAsset extends MarketAssetBase {
   city: string;
   cityKo: string;
   countryCode: string;
+  isoNumeric: string;
   currency: string;
   coords: GeoPoint;
   isOpen: boolean;
@@ -83,6 +86,71 @@ export interface CommodityAsset extends MarketAssetBase {
 
 export type AnyMarketAsset = EquityIndexAsset | FxPairAsset | CommodityAsset;
 
+export interface MacroIndicator {
+  id: string;
+  symbol: string;
+  feedSymbol: string;
+  name: string;
+  nameKo: string;
+  price: number;
+  prevClose: number;
+  change: number;
+  changePercent: number;
+  decimals: number;
+  unit: string;
+  sparkline: number[];
+  source: DataSourceKind;
+}
+
+export interface RiskRegime {
+  /** 0 (Extreme Risk-Off) to 100 (Strong Risk-On) */
+  score: number;
+  label: "RISK-ON" | "NEUTRAL" | "RISK-OFF";
+  labelKo: string;
+  tone: "up" | "neutral" | "down";
+}
+
+export interface NewsPinItem {
+  id: string;
+  title: string;
+  summary: string;
+  source: string;
+  url: string;
+  publishedAt: number;
+  city: string;
+  cityKo: string;
+  region: Exclude<RegionKey, "global">;
+  coords: GeoPoint;
+  sentiment: "bullish" | "bearish" | "neutral";
+}
+
+export interface HistoryPoint {
+  t: number;
+  v: number;
+}
+
+export interface HistoryResponse {
+  symbol: string;
+  range: HistoryRange;
+  points: HistoryPoint[];
+  changePercent: number;
+  high: number;
+  low: number;
+  fetchedAt: number;
+}
+
+export interface PriceAlert {
+  id: string;
+  assetId: string;
+  symbol: string;
+  nameKo: string;
+  direction: "above" | "below";
+  targetPrice: number;
+  decimals: number;
+  triggered: boolean;
+  createdAt: number;
+}
+
 export interface CacheTelemetry {
   cacheTier: "l1-memory" | "l2-redis" | "origin-fresh";
   redisConfigured: boolean;
@@ -109,6 +177,8 @@ export interface MarketSnapshot {
   indices: EquityIndexAsset[];
   fx: FxPairAsset[];
   commodities: CommodityAsset[];
+  macro: MacroIndicator[];
+  riskRegime: RiskRegime;
   telemetry: CacheTelemetry;
 }
 

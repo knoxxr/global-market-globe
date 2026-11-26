@@ -12,6 +12,7 @@ import type {
   EquityIndexAsset,
   FxPairAsset,
   GeoPoint,
+  NewsPinItem,
 } from "@/lib/market/types";
 
 export interface GlobeFocusTarget {
@@ -25,12 +26,17 @@ interface GlobeCanvasProps {
   indices: EquityIndexAsset[];
   fx: FxPairAsset[];
   commodities: CommodityAsset[];
+  newsItems: NewsPinItem[];
   activeFilter: "all" | AssetCategory;
   selectedAssetId: string | null;
+  selectedNewsId: string | null;
   autoRotate: boolean;
   showDayNight: boolean;
+  showHeatmap: boolean;
+  showNewsPins: boolean;
   focusTarget: GlobeFocusTarget | null;
   onSelectAsset: (asset: AnyMarketAsset | null) => void;
+  onSelectNews: (news: NewsPinItem | null) => void;
 }
 
 const GLOBE_RADIUS = 1.0;
@@ -80,10 +86,22 @@ export function getMidpointCoords(a: GeoPoint, b: GeoPoint): GeoPoint {
   return { lat, lng };
 }
 
+function getHeatmapFillColor(changePercent: number, isNight: boolean): string {
+  const intensity = Math.min(1, Math.abs(changePercent) / 2.6);
+  if (changePercent >= 0) {
+    // Slate-teal -> Vivid Emerald
+    const alpha = isNight ? 0.32 + intensity * 0.48 : 0.36 + intensity * 0.56;
+    return `rgba(16, 185, 129, ${alpha.toFixed(2)})`;
+  }
+  // Slate-teal -> Vivid Coral Rose
+  const alpha = isNight ? 0.32 + intensity * 0.48 : 0.36 + intensity * 0.56;
+  return `rgba(244, 63, 94, ${alpha.toFixed(2)})`;
+}
+
 /**
- * Builds high-resolution (4096x2048 when supported) anti-aliased day/night Earth textures
+ * Builds high-resolution (4096x2048 when supported) anti-aliased day/night Earth textures,
+ * a fast repaintHeatmap helper for Choropleth country coloring,
  * AND true 3D vector LineSegments for coastlines & country borders from Natural Earth 50m data.
- * Result: buttery-smooth coastlines with zero pixelation even at maximum zoom.
  */
 function buildEarthAssets(
   hubs: GeoPoint[],
@@ -94,6 +112,7 @@ function buildEarthAssets(
   nightMap: THREE.CanvasTexture;
   coastlineGeom: THREE.BufferGeometry;
   borderGeom: THREE.BufferGeometry;
+  repaintHeatmap: (indices: EquityIndexAsset[], enabled: boolean) => void;
 } {
   const width = maxTextureSize >= 4096 ? 4096 : 2048;
   const height = width / 2;
@@ -106,41 +125,13 @@ function buildEarthAssets(
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
-  // Smooth maritime ocean gradient with subtle bathymetry depth
-  const oceanGrad = ctx.createLinearGradient(0, 0, 0, height);
-  oceanGrad.addColorStop(0, "#102846");
-  oceanGrad.addColorStop(0.5, "#0c1f39");
-  oceanGrad.addColorStop(1, "#102846");
-  ctx.fillStyle = oceanGrad;
-  ctx.fillRect(0, 0, width, height);
+  const nightCanvas = document.createElement("canvas");
+  nightCanvas.width = width;
+  nightCanvas.height = height;
+  const nctx = nightCanvas.getContext("2d")!;
+  nctx.lineJoin = "round";
+  nctx.lineCap = "round";
 
-  // Delicate latitude/longitude graticule
-  ctx.strokeStyle = "rgba(148, 197, 240, 0.11)";
-  ctx.lineWidth = 1.0 * scale;
-  for (let lng = -150; lng <= 180; lng += 30) {
-    const x = ((lng + 180) / 360) * width;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
-  }
-  for (let lat = -60; lat <= 60; lat += 30) {
-    const y = ((90 - lat) / 180) * height;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
-  }
-
-  // Equator accent
-  ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
-  ctx.lineWidth = 1.1 * scale;
-  ctx.beginPath();
-  ctx.moveTo(0, height / 2);
-  ctx.lineTo(width, height / 2);
-  ctx.stroke();
-
-  // Extract high-detail 50m GeoJSON features & meshes
   const topology = countriesAtlas as unknown as Topology<{
     countries: GeometryCollection;
   }>;
@@ -175,97 +166,133 @@ function buildEarthAssets(
     }
   };
 
-  // Fill continents with subtle coastal shelf halo for crisp, anti-aliased separation
-  ctx.save();
-  ctx.shadowColor = "rgba(56, 189, 248, 0.34)";
-  ctx.shadowBlur = 7 * scale;
-  ctx.fillStyle = "#294b6e";
-  if (geo.type === "FeatureCollection") {
-    for (const feature of geo.features) {
-      const geom = feature.geometry;
-      if (!geom) continue;
+  const paintBaseMaps = (heatmapByIso: Map<string, number> | null) => {
+    // 1) DAY CANVAS
+    const oceanGrad = ctx.createLinearGradient(0, 0, 0, height);
+    oceanGrad.addColorStop(0, "#102846");
+    oceanGrad.addColorStop(0.5, "#0c1f39");
+    oceanGrad.addColorStop(1, "#102846");
+    ctx.fillStyle = oceanGrad;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = "rgba(148, 197, 240, 0.11)";
+    ctx.lineWidth = 1.0 * scale;
+    for (let lng = -150; lng <= 180; lng += 30) {
+      const x = ((lng + 180) / 360) * width;
       ctx.beginPath();
-      if (geom.type === "Polygon") {
-        for (const ring of geom.coordinates) drawPathOnCtx(ctx, ring);
-      } else if (geom.type === "MultiPolygon") {
-        for (const poly of geom.coordinates) {
-          for (const ring of poly) drawPathOnCtx(ctx, ring);
-        }
-      }
-      ctx.fill();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
     }
-  }
-  ctx.restore();
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const y = ((90 - lat) / 180) * height;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+    ctx.lineWidth = 1.1 * scale;
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
 
-  // Readable Night Hemisphere Canvas
-  const nightCanvas = document.createElement("canvas");
-  nightCanvas.width = width;
-  nightCanvas.height = height;
-  const nctx = nightCanvas.getContext("2d")!;
-  nctx.lineJoin = "round";
-  nctx.lineCap = "round";
+    ctx.save();
+    ctx.shadowColor = "rgba(56, 189, 248, 0.32)";
+    ctx.shadowBlur = 7 * scale;
+    if (geo.type === "FeatureCollection") {
+      for (const feature of geo.features) {
+        const geom = feature.geometry;
+        if (!geom) continue;
+        ctx.beginPath();
+        if (geom.type === "Polygon") {
+          for (const ring of geom.coordinates) drawPathOnCtx(ctx, ring);
+        } else if (geom.type === "MultiPolygon") {
+          for (const poly of geom.coordinates) {
+            for (const ring of poly) drawPathOnCtx(ctx, ring);
+          }
+        }
+        ctx.fillStyle = "#294b6e";
+        ctx.fill();
 
-  const nightOceanGrad = nctx.createLinearGradient(0, 0, 0, height);
-  nightOceanGrad.addColorStop(0, "#0b1a2e");
-  nightOceanGrad.addColorStop(0.5, "#081426");
-  nightOceanGrad.addColorStop(1, "#0b1a2e");
-  nctx.fillStyle = nightOceanGrad;
-  nctx.fillRect(0, 0, width, height);
-
-  // Subtle night graticule
-  nctx.strokeStyle = "rgba(100, 155, 205, 0.07)";
-  nctx.lineWidth = 1.0 * scale;
-  for (let lng = -150; lng <= 180; lng += 30) {
-    const x = ((lng + 180) / 360) * width;
-    nctx.beginPath();
-    nctx.moveTo(x, 0);
-    nctx.lineTo(x, height);
-    nctx.stroke();
-  }
-  for (let lat = -60; lat <= 60; lat += 30) {
-    const y = ((90 - lat) / 180) * height;
-    nctx.beginPath();
-    nctx.moveTo(0, y);
-    nctx.lineTo(width, y);
-    nctx.stroke();
-  }
-
-  // Night continents with soft coastal glow
-  nctx.save();
-  nctx.shadowColor = "rgba(56, 189, 248, 0.22)";
-  nctx.shadowBlur = 5 * scale;
-  nctx.fillStyle = "#1b3452";
-  if (geo.type === "FeatureCollection") {
-    for (const feature of geo.features) {
-      const geom = feature.geometry;
-      if (!geom) continue;
-      nctx.beginPath();
-      if (geom.type === "Polygon") {
-        for (const ring of geom.coordinates) drawPathOnCtx(nctx, ring);
-      } else if (geom.type === "MultiPolygon") {
-        for (const poly of geom.coordinates) {
-          for (const ring of poly) drawPathOnCtx(nctx, ring);
+        const isoId = String(feature.id ?? "");
+        if (heatmapByIso && heatmapByIso.has(isoId)) {
+          ctx.fillStyle = getHeatmapFillColor(heatmapByIso.get(isoId)!, false);
+          ctx.fill();
         }
       }
+    }
+    ctx.restore();
+
+    // 2) NIGHT CANVAS
+    const nightOceanGrad = nctx.createLinearGradient(0, 0, 0, height);
+    nightOceanGrad.addColorStop(0, "#0b1a2e");
+    nightOceanGrad.addColorStop(0.5, "#081426");
+    nightOceanGrad.addColorStop(1, "#0b1a2e");
+    nctx.fillStyle = nightOceanGrad;
+    nctx.fillRect(0, 0, width, height);
+
+    nctx.strokeStyle = "rgba(100, 155, 205, 0.07)";
+    nctx.lineWidth = 1.0 * scale;
+    for (let lng = -150; lng <= 180; lng += 30) {
+      const x = ((lng + 180) / 360) * width;
+      nctx.beginPath();
+      nctx.moveTo(x, 0);
+      nctx.lineTo(x, height);
+      nctx.stroke();
+    }
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const y = ((90 - lat) / 180) * height;
+      nctx.beginPath();
+      nctx.moveTo(0, y);
+      nctx.lineTo(width, y);
+      nctx.stroke();
+    }
+
+    nctx.save();
+    nctx.shadowColor = "rgba(56, 189, 248, 0.22)";
+    nctx.shadowBlur = 5 * scale;
+    if (geo.type === "FeatureCollection") {
+      for (const feature of geo.features) {
+        const geom = feature.geometry;
+        if (!geom) continue;
+        nctx.beginPath();
+        if (geom.type === "Polygon") {
+          for (const ring of geom.coordinates) drawPathOnCtx(nctx, ring);
+        } else if (geom.type === "MultiPolygon") {
+          for (const poly of geom.coordinates) {
+            for (const ring of poly) drawPathOnCtx(nctx, ring);
+          }
+        }
+        nctx.fillStyle = "#1b3452";
+        nctx.fill();
+
+        const isoId = String(feature.id ?? "");
+        if (heatmapByIso && heatmapByIso.has(isoId)) {
+          nctx.fillStyle = getHeatmapFillColor(heatmapByIso.get(isoId)!, true);
+          nctx.fill();
+        }
+      }
+    }
+    nctx.restore();
+
+    const hubRadius = 30 * scale;
+    for (const hub of hubs) {
+      const cx = projectX(hub.lng);
+      const cy = projectY(hub.lat);
+      const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, hubRadius);
+      grad.addColorStop(0, "rgba(251, 191, 36, 0.72)");
+      grad.addColorStop(0.35, "rgba(245, 158, 11, 0.28)");
+      grad.addColorStop(1, "rgba(245, 158, 11, 0)");
+      nctx.fillStyle = grad;
+      nctx.beginPath();
+      nctx.arc(cx, cy, hubRadius, 0, Math.PI * 2);
       nctx.fill();
     }
-  }
-  nctx.restore();
+  };
 
-  // Warm golden city-light bloom around global financial hubs on night side
-  const hubRadius = 30 * scale;
-  for (const hub of hubs) {
-    const cx = projectX(hub.lng);
-    const cy = projectY(hub.lat);
-    const grad = nctx.createRadialGradient(cx, cy, 1, cx, cy, hubRadius);
-    grad.addColorStop(0, "rgba(251, 191, 36, 0.72)");
-    grad.addColorStop(0.35, "rgba(245, 158, 11, 0.28)");
-    grad.addColorStop(1, "rgba(245, 158, 11, 0)");
-    nctx.fillStyle = grad;
-    nctx.beginPath();
-    nctx.arc(cx, cy, hubRadius, 0, Math.PI * 2);
-    nctx.fill();
-  }
+  paintBaseMaps(null);
 
   const dayMap = new THREE.CanvasTexture(dayCanvas);
   dayMap.colorSpace = THREE.SRGBColorSpace;
@@ -280,6 +307,42 @@ function buildEarthAssets(
   nightMap.minFilter = THREE.LinearMipmapLinearFilter;
   nightMap.magFilter = THREE.LinearFilter;
   nightMap.anisotropy = Math.min(16, maxAnisotropy);
+
+  let lastHeatmapSignature = "off";
+  const repaintHeatmap = (indices: EquityIndexAsset[], enabled: boolean) => {
+    if (!enabled) {
+      if (lastHeatmapSignature === "off") return;
+      lastHeatmapSignature = "off";
+      paintBaseMaps(null);
+      dayMap.needsUpdate = true;
+      nightMap.needsUpdate = true;
+      return;
+    }
+
+    const accum = new Map<string, { sum: number; count: number }>();
+    for (const idx of indices) {
+      if (!idx.isoNumeric) continue;
+      const prev = accum.get(idx.isoNumeric) ?? { sum: 0, count: 0 };
+      prev.sum += idx.changePercent;
+      prev.count += 1;
+      accum.set(idx.isoNumeric, prev);
+    }
+
+    const avgMap = new Map<string, number>();
+    const sigParts: string[] = [];
+    accum.forEach((val, iso) => {
+      const avg = Math.round((val.sum / val.count) * 10) / 10;
+      avgMap.set(iso, avg);
+      sigParts.push(`${iso}:${avg}`);
+    });
+    const nextSig = sigParts.sort().join("|");
+    if (nextSig === lastHeatmapSignature) return;
+
+    lastHeatmapSignature = nextSig;
+    paintBaseMaps(avgMap);
+    dayMap.needsUpdate = true;
+    nightMap.needsUpdate = true;
+  };
 
   // Build infinite-resolution 3D vector LineSegments directly on the sphere
   const buildVectorLineGeometry = (
@@ -316,7 +379,7 @@ function buildEarthAssets(
   const coastlineGeom = buildVectorLineGeometry(coastlines, GLOBE_RADIUS + 0.0014);
   const borderGeom = buildVectorLineGeometry(interiorBorders, GLOBE_RADIUS + 0.0011);
 
-  return { dayMap, nightMap, coastlineGeom, borderGeom };
+  return { dayMap, nightMap, coastlineGeom, borderGeom, repaintHeatmap };
 }
 
 interface IndexedMarkerObjects {
@@ -334,16 +397,29 @@ interface IndexedMarkerObjects {
   flowDirection?: number;
 }
 
+interface NewsMarkerObjects {
+  id: string;
+  news: NewsPinItem;
+  anchorPos: THREE.Vector3;
+  normal: THREE.Vector3;
+  ringMesh: THREE.Mesh;
+}
+
 export default function GlobeCanvas({
   indices,
   fx,
   commodities,
+  newsItems,
   activeFilter,
   selectedAssetId,
+  selectedNewsId,
   autoRotate,
   showDayNight,
+  showHeatmap,
+  showNewsPins,
   focusTarget,
   onSelectAsset,
+  onSelectNews,
 }: GlobeCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelContainerRef = useRef<HTMLDivElement | null>(null);
@@ -353,16 +429,20 @@ export default function GlobeCanvas({
     indices,
     fx,
     commodities,
+    newsItems,
     activeFilter,
     selectedAssetId,
+    selectedNewsId,
     autoRotate,
     showDayNight,
+    showHeatmap,
+    showNewsPins,
     onSelectAsset,
+    onSelectNews,
   });
 
   // Camera spherical state ref
   const cameraStateRef = useRef({
-    // Default focus on Asia-Europe corridor (Korea/Europe visible)
     targetLng: 40,
     targetLat: 24,
     targetDistance: 2.85,
@@ -377,7 +457,6 @@ export default function GlobeCanvas({
   useEffect(() => {
     if (!focusTarget) return;
     const cam = cameraStateRef.current;
-    // Take shortest longitude path
     const deltaLng = ((focusTarget.lng - cam.currentLng + 540) % 360) - 180;
     cam.targetLng = cam.currentLng + deltaLng;
     cam.targetLat = THREE.MathUtils.clamp(focusTarget.lat, -70, 70);
@@ -394,23 +473,42 @@ export default function GlobeCanvas({
     return [...indices, ...fx, ...commodities];
   }, [indices, fx, commodities, activeFilter]);
 
-  // Ref for dynamic scene update function exposed by main Three.js effect
   const syncSceneDataRef = useRef<(() => void) | null>(null);
   const labelElementsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const newsLabelElementsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   useEffect(() => {
     propsRef.current = {
       indices,
       fx,
       commodities,
+      newsItems,
       activeFilter,
       selectedAssetId,
+      selectedNewsId,
       autoRotate,
       showDayNight,
+      showHeatmap,
+      showNewsPins,
       onSelectAsset,
+      onSelectNews,
     };
     syncSceneDataRef.current?.();
-  }, [indices, fx, commodities, activeFilter, selectedAssetId, autoRotate, showDayNight, onSelectAsset]);
+  }, [
+    indices,
+    fx,
+    commodities,
+    newsItems,
+    activeFilter,
+    selectedAssetId,
+    selectedNewsId,
+    autoRotate,
+    showDayNight,
+    showHeatmap,
+    showNewsPins,
+    onSelectAsset,
+    onSelectNews,
+  ]);
 
   // Initialize Three.js WebGL scene once
   useEffect(() => {
@@ -467,7 +565,7 @@ export default function GlobeCanvas({
       ...propsRef.current.indices.map((i) => i.coords),
       ...propsRef.current.commodities.map((c) => c.coords),
     ];
-    const { dayMap, nightMap, coastlineGeom, borderGeom } = buildEarthAssets(
+    const { dayMap, nightMap, coastlineGeom, borderGeom, repaintHeatmap } = buildEarthAssets(
       allHubCoords,
       renderer.capabilities.maxTextureSize,
       renderer.capabilities.getMaxAnisotropy()
@@ -599,6 +697,7 @@ export default function GlobeCanvas({
     scene.add(dataGroup);
 
     const markerRegistry = new Map<string, IndexedMarkerObjects>();
+    const newsMarkerRegistry = new Map<string, NewsMarkerObjects>();
     let clickableMeshes: THREE.Object3D[] = [];
 
     // Shared geometries to minimize GPU memory churn
@@ -636,18 +735,24 @@ export default function GlobeCanvas({
         }
       }
       markerRegistry.clear();
+      newsMarkerRegistry.clear();
       clickableMeshes = [];
 
       const {
         indices: curIndices,
         fx: curFx,
         commodities: curCmds,
+        newsItems: curNews,
         activeFilter: curFilter,
         selectedAssetId: curSelected,
+        selectedNewsId: curSelectedNews,
         showDayNight: curDayNight,
+        showHeatmap: curHeatmap,
+        showNewsPins: curShowNews,
       } = propsRef.current;
 
       earthUniforms.uShowDayNight.value = curDayNight ? 1.0 : 0.0;
+      repaintHeatmap(curIndices, curHeatmap);
 
       // 1) GLOBAL STOCK INDICES — Glowing vertical column beacons + live pulse rings
       if (curFilter === "all" || curFilter === "index") {
@@ -833,6 +938,58 @@ export default function GlobeCanvas({
           });
         }
       }
+
+      // 4) GLOBAL FINANCE NEWS PULSE PINS
+      if (curShowNews && curNews.length > 0) {
+        for (const item of curNews) {
+          const surfacePos = latLngToVector3(item.coords.lat, item.coords.lng, GLOBE_RADIUS + 0.007);
+          const normal = surfacePos.clone().normalize();
+          const isSelected = curSelectedNews === item.id;
+          const colorHex = isSelected
+            ? 0x38bdf8
+            : item.sentiment === "bullish"
+            ? 0x34d399
+            : item.sentiment === "bearish"
+            ? 0xfb7185
+            : 0xfbbf24;
+
+          const dotMat = new THREE.MeshBasicMaterial({
+            color: colorHex,
+            transparent: true,
+            opacity: 0.95,
+          });
+          const dotMesh = new THREE.Mesh(flowDotGeom, dotMat);
+          dotMesh.position.copy(surfacePos.clone().add(normal.clone().multiplyScalar(0.012)));
+          dotMesh.scale.setScalar(isSelected ? 1.55 : 1.15);
+          dataGroup.add(dotMesh);
+
+          const ringMat = new THREE.MeshBasicMaterial({
+            color: colorHex,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.85,
+          });
+          const ringMesh = new THREE.Mesh(ringGeom, ringMat);
+          ringMesh.position.copy(surfacePos);
+          ringMesh.lookAt(surfacePos.clone().multiplyScalar(2));
+          dataGroup.add(ringMesh);
+
+          const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+          const hitMesh = new THREE.Mesh(hitSphereGeom, hitMat);
+          hitMesh.position.copy(surfacePos.clone().add(normal.clone().multiplyScalar(0.02)));
+          hitMesh.userData = { newsId: item.id };
+          dataGroup.add(hitMesh);
+          clickableMeshes.push(hitMesh);
+
+          newsMarkerRegistry.set(item.id, {
+            id: item.id,
+            news: item,
+            anchorPos: surfacePos.clone().add(normal.clone().multiplyScalar(0.045)),
+            normal,
+            ringMesh,
+          });
+        }
+      }
     };
 
     syncSceneDataRef.current = rebuildDataLayers;
@@ -909,6 +1066,14 @@ export default function GlobeCanvas({
           raycaster.setFromCamera(pointerNdc, camera);
           const hits = raycaster.intersectObjects(clickableMeshes, false);
           if (hits.length > 0) {
+            const hitNewsId = hits[0].object.userData?.newsId as string | undefined;
+            if (hitNewsId) {
+              const foundNews = newsMarkerRegistry.get(hitNewsId);
+              if (foundNews) {
+                propsRef.current.onSelectNews(foundNews.news);
+                return;
+              }
+            }
             const hitId = hits[0].object.userData?.assetId as string | undefined;
             if (hitId) {
               const found = markerRegistry.get(hitId);
@@ -1083,6 +1248,40 @@ export default function GlobeCanvas({
         }
       });
 
+      // Animate & project 3D News Pulse Pins
+      newsMarkerRegistry.forEach((nItem) => {
+        const isSelected = propsRef.current.selectedNewsId === nItem.id;
+        const phase = (elapsed * 0.75 + nItem.id.length * 0.21) % 1;
+        nItem.ringMesh.scale.setScalar(1 + phase * (isSelected ? 2.8 : 2.0));
+        const mat = nItem.ringMesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = (1 - phase) * (isSelected ? 0.95 : 0.7);
+
+        const el = newsLabelElementsRef.current.get(nItem.id);
+        if (el) {
+          const facing = nItem.normal.dot(camDirVec);
+          if (facing <= 0.22) {
+            el.style.opacity = "0";
+            el.style.pointerEvents = "none";
+          } else {
+            projectedVec.copy(nItem.anchorPos).project(camera);
+            const x = (projectedVec.x * 0.5 + 0.5) * viewW;
+            const y = (-projectedVec.y * 0.5 + 0.5) * viewH;
+            if (x < -40 || x > viewW + 40 || y < -20 || y > viewH + 20) {
+              el.style.opacity = "0";
+              el.style.pointerEvents = "none";
+            } else {
+              const fade = THREE.MathUtils.smoothstep(facing, 0.22, 0.45);
+              el.style.opacity = String(isSelected ? 1 : fade * 0.92);
+              el.style.pointerEvents = "auto";
+              el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(
+                1
+              )}px, 0) translate(-50%, -100%)`;
+              el.style.zIndex = isSelected ? "32" : String(Math.round(facing * 18));
+            }
+          }
+        }
+      });
+
       renderer.render(scene, camera);
     };
 
@@ -1166,6 +1365,32 @@ export default function GlobeCanvas({
             </button>
           );
         })}
+
+        {showNewsPins &&
+          newsItems.map((news) => {
+            const isSelected = selectedNewsId === news.id;
+            return (
+              <button
+                key={news.id}
+                type="button"
+                ref={(el) => {
+                  if (el) {
+                    newsLabelElementsRef.current.set(news.id, el);
+                  } else {
+                    newsLabelElementsRef.current.delete(news.id);
+                  }
+                }}
+                className={`globe-news-pin sent-${news.sentiment} ${
+                  isSelected ? "is-selected" : ""
+                }`}
+                onClick={() => onSelectNews(news)}
+                title={news.title}
+              >
+                <span className="news-pin-dot" />
+                <span className="news-pin-city">NEWS · {news.cityKo}</span>
+              </button>
+            );
+          })}
       </div>
     </div>
   );

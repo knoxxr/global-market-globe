@@ -1,12 +1,30 @@
 "use client";
 
-import React from "react";
-import { ArrowRight, Clock, Compass, Globe2, X } from "lucide-react";
-import type { AnyMarketAsset } from "@/lib/market/types";
-import Sparkline from "./Sparkline";
+import React, { useState } from "react";
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Bell,
+  Clock,
+  Compass,
+  Globe2,
+  Share2,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
+import type { AnyMarketAsset, PriceAlert } from "@/lib/market/types";
+import InteractiveChart from "./InteractiveChart";
 
 interface AssetDetailCardProps {
   asset: AnyMarketAsset;
+  allAssets: AnyMarketAsset[];
+  isFavorite: boolean;
+  alerts: PriceAlert[];
+  onToggleFavorite: (assetId: string) => void;
+  onAddAlert: (asset: AnyMarketAsset, direction: "above" | "below", targetPrice: number) => void;
+  onRemoveAlert: (alertId: string) => void;
+  onShareView: () => void;
   onClose: () => void;
   onFocusOnGlobe: (asset: AnyMarketAsset) => void;
 }
@@ -20,6 +38,13 @@ export function formatAssetPrice(price: number, decimals: number): string {
 
 export default function AssetDetailCard({
   asset,
+  allAssets,
+  isFavorite,
+  alerts,
+  onToggleFavorite,
+  onAddAlert,
+  onRemoveAlert,
+  onShareView,
   onClose,
   onFocusOnGlobe,
 }: AssetDetailCardProps) {
@@ -29,6 +54,19 @@ export default function AssetDetailCard({
     0,
     Math.min(100, ((asset.price - asset.dayLow) / rangeSpan) * 100)
   );
+
+  // FX Calculator local state
+  const [fxAmount, setFxAmount] = useState("1000");
+  const [fxReversed, setFxReversed] = useState(false);
+
+  // Price Alert form state
+  const [showAlertForm, setShowAlertForm] = useState(false);
+  const [alertDirection, setAlertDirection] = useState<"above" | "below">("above");
+  const [alertPriceInput, setAlertPriceInput] = useState(() =>
+    asset.price.toFixed(asset.decimals)
+  );
+
+  const assetAlerts = alerts.filter((a) => a.assetId === asset.id);
 
   const categoryBadge =
     asset.category === "index"
@@ -43,7 +81,7 @@ export default function AssetDetailCard({
       : asset.source === "finnhub"
       ? "Finnhub Live"
       : asset.source === "yahoo"
-      ? `실시간 피드 (${asset.feedSymbol})`
+      ? `실시간 (${asset.feedSymbol})`
       : asset.source === "frankfurter"
       ? "ECB 환율 피드"
       : asset.source === "hybrid"
@@ -58,6 +96,23 @@ export default function AssetDetailCard({
         hour12: false,
       })
     : "—";
+
+  const parsedFxAmount = Number(fxAmount.replace(/,/g, ""));
+  const validFxNum = Number.isFinite(parsedFxAmount) && parsedFxAmount >= 0 ? parsedFxAmount : 0;
+  const convertedFx =
+    asset.category === "fx"
+      ? fxReversed
+        ? validFxNum / Math.max(asset.price, 1e-6)
+        : validFxNum * asset.price
+      : 0;
+
+  const handleSubmitAlert = (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = Number(alertPriceInput);
+    if (!Number.isFinite(target) || target <= 0) return;
+    onAddAlert(asset, alertDirection, target);
+    setShowAlertForm(false);
+  };
 
   return (
     <aside className="detail-card" aria-label={`${asset.nameKo} 상세 정보`}>
@@ -85,16 +140,47 @@ export default function AssetDetailCard({
             {asset.category === "commodity" && `${asset.hubNameKo} · ${asset.unit}`}
           </p>
         </div>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onClose}
-          aria-label="상세 패널 닫기"
-        >
-          <X size={16} />
-        </button>
+
+        <div className="detail-header-actions">
+          <button
+            type="button"
+            className={`icon-btn ${isFavorite ? "is-star-active" : ""}`}
+            onClick={() => onToggleFavorite(asset.id)}
+            title={isFavorite ? "관심종목 해제" : "관심종목 추가"}
+            aria-label="관심종목 토글"
+          >
+            <Star size={14} fill={isFavorite ? "currentColor" : "none"} />
+          </button>
+          <button
+            type="button"
+            className={`icon-btn ${showAlertForm || assetAlerts.length > 0 ? "is-accent" : ""}`}
+            onClick={() => setShowAlertForm((v) => !v)}
+            title="목표가 알림 설정"
+            aria-label="목표가 알림 설정"
+          >
+            <Bell size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onShareView}
+            title="현재 뷰 딥링크 복사"
+            aria-label="현재 뷰 링크 공유"
+          >
+            <Share2 size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="상세 패널 닫기"
+          >
+            <X size={15} />
+          </button>
+        </div>
       </div>
 
+      {/* Live Price Block */}
       <div className="detail-price-row">
         <div className="detail-price-block">
           <div className="detail-price mono-num">
@@ -109,11 +195,109 @@ export default function AssetDetailCard({
             {asset.changePercent.toFixed(2)}%)
           </div>
         </div>
-        <div className="detail-spark-wrap">
-          <Sparkline data={asset.sparkline} positive={isPositive} width={112} height={42} />
-        </div>
       </div>
 
+      {/* Interactive Multi-Range Chart (1D / 1W / 1M / 3M + 2-Asset Compare) */}
+      <InteractiveChart asset={asset} compareCandidates={allAssets} />
+
+      {/* Price Alert Creator & Active Alerts */}
+      {(showAlertForm || assetAlerts.length > 0) && (
+        <div className="alert-panel">
+          {showAlertForm && (
+            <form className="alert-form" onSubmit={handleSubmitAlert}>
+              <select
+                value={alertDirection}
+                onChange={(e) => setAlertDirection(e.target.value as "above" | "below")}
+                className="alert-select"
+                aria-label="알림 조건 방향"
+              >
+                <option value="above">이상 (≥)</option>
+                <option value="below">이하 (≤)</option>
+              </select>
+              <input
+                type="number"
+                step="any"
+                value={alertPriceInput}
+                onChange={(e) => setAlertPriceInput(e.target.value)}
+                className="alert-input mono-num"
+                placeholder="목표가"
+                aria-label="목표가 입력"
+              />
+              <button type="submit" className="alert-save-btn">
+                등록
+              </button>
+            </form>
+          )}
+          {assetAlerts.length > 0 && (
+            <div className="alert-chip-list">
+              {assetAlerts.map((al) => (
+                <div key={al.id} className={`alert-chip ${al.triggered ? "is-triggered" : ""}`}>
+                  <span className="mono-num">
+                    {al.direction === "above" ? "≥" : "≤"}{" "}
+                    {formatAssetPrice(al.targetPrice, al.decimals)}
+                    {al.triggered ? " (도달)" : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="alert-del-btn"
+                    onClick={() => onRemoveAlert(al.id)}
+                    aria-label="알림 삭제"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FX Instant Currency Converter */}
+      {asset.category === "fx" && (
+        <div className="fx-calc-box">
+          <div className="fx-calc-header">
+            <span>실시간 환율 계산기</span>
+            <button
+              type="button"
+              className="fx-swap-btn"
+              onClick={() => setFxReversed((v) => !v)}
+              title="통화 방향 전환"
+            >
+              <ArrowLeftRight size={12} />
+              전환
+            </button>
+          </div>
+          <div className="fx-calc-row">
+            <div className="fx-calc-input-wrap">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={fxAmount}
+                onChange={(e) => setFxAmount(e.target.value)}
+                className="fx-calc-input mono-num"
+                aria-label="환산 금액 입력"
+              />
+              <span className="fx-calc-ccy">
+                {fxReversed ? asset.quoteCurrency : asset.baseCurrency}
+              </span>
+            </div>
+            <span className="fx-calc-eq">=</span>
+            <div className="fx-calc-result mono-num">
+              <strong>
+                {convertedFx.toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: fxReversed ? 4 : 2,
+                })}
+              </strong>
+              <span className="fx-calc-ccy">
+                {fxReversed ? asset.baseCurrency : asset.quoteCurrency}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Intraday Range Bar */}
       <div className="detail-range-box">
         <div className="range-labels mono-num">
           <span>저가 {formatAssetPrice(asset.dayLow, asset.decimals)}</span>
@@ -129,6 +313,7 @@ export default function AssetDetailCard({
         </div>
       </div>
 
+      {/* Metadata Grid */}
       <div className="detail-meta-grid">
         <div className="meta-cell">
           <span className="meta-label">전일 종가</span>
@@ -142,7 +327,7 @@ export default function AssetDetailCard({
         </div>
         {asset.category === "index" && (
           <div className="meta-cell">
-            <span className="meta-label">정규장 (UTC) / 호가시각</span>
+            <span className="meta-label">정규장 (UTC) · 호가</span>
             <span className="meta-val mono-num">
               <Clock size={11} style={{ display: "inline", marginRight: 4 }} />
               {String(asset.hoursUtc.openHour).padStart(2, "0")}:
@@ -154,7 +339,7 @@ export default function AssetDetailCard({
         )}
         {asset.category === "fx" && (
           <div className="meta-cell">
-            <span className="meta-label">흐름 방향 · 호가시각</span>
+            <span className="meta-label">흐름 · 호가시각</span>
             <span className="meta-val">
               {isPositive ? `${asset.baseCurrency} 강세` : `${asset.quoteCurrency} 강세`} ·{" "}
               {quoteTimeText}

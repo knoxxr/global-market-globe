@@ -1516,3 +1516,873 @@ input {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ==========================================================================
+   V2 Enhancements — Macro Pulse, 24h Session Relay, Interactive Chart,
+   FX Calculator, News Pulse Pins, Favorites/Alerts, Toast & Responsive Polish
+   ========================================================================== */
+
+/* Adjust desktop drawer & detail slots below Macro Pulse Strip */
+.desktop-watchlist-drawer {
+  top: 112px;
+  width: 356px;
+}
+
+.desktop-detail-slot {
+  top: 112px;
+  width: 360px;
+  max-height: calc(100dvh - 160px);
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+}
+
+.desktop-detail-slot::-webkit-scrollbar {
+  width: 5px;
+}
+
+.desktop-detail-slot::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 99px;
+}
+
+/* Feature 1: Macro Risk Pulse Strip */
+.macro-hud-slot {
+  position: fixed;
+  top: calc(70px + var(--safe-top));
+  left: 16px;
+  right: 16px;
+  z-index: 26;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.macro-pulse-strip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(8, 14, 26, 0.82);
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 10px 26px -10px rgba(0, 0, 0, 0.65);
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.risk-up {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.risk-down {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.risk-neutral {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+}
+
+.risk-ko {
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.risk-score {
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: rgba(5, 9, 17, 0.45);
+  font-size: 0.65rem;
+}
+
+.macro-items-scroll {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.macro-items-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.macro-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  padding: 2px 4px;
+}
+
+.macro-sym {
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+.macro-val {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.macro-chg {
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+/* Feature 3: 24h Session Relay Bar */
+.desktop-relay-slot {
+  position: fixed;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 18;
+  width: min(500px, calc(100vw - 750px));
+  min-width: 340px;
+}
+
+.session-relay-bar {
+  padding: 8px 12px 9px;
+  border-radius: var(--radius-md);
+  background: rgba(8, 14, 26, 0.82);
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: var(--shadow-panel);
+}
+
+.relay-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+.relay-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.relay-sep {
+  opacity: 0.45;
+}
+
+.relay-countdown {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relay-countdown strong {
+  color: var(--accent);
+}
+
+.relay-open-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--up);
+  font-weight: 600;
+}
+
+.relay-timeline-track {
+  position: relative;
+  height: 22px;
+  border-radius: 7px;
+  background: rgba(5, 9, 17, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.relay-segment {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 5px;
+  background: rgba(30, 41, 59, 0.55);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+
+.relay-segment:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  z-index: 3;
+}
+
+.relay-segment.is-open {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #6ee7b7;
+}
+
+.relay-seg-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+}
+
+.relay-now-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Feature 4: Interactive Multi-Range Chart & Comparator */
+.ichart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 11px;
+  background: rgba(5, 9, 17, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.11);
+}
+
+.ichart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ichart-ranges {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.75);
+}
+
+.ichart-range-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ichart-range-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ichart-compare-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 148px;
+}
+
+.compare-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ichart-compare-select {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  padding: 3px 5px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ichart-readout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  min-height: 16px;
+}
+
+.readout-muted {
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+
+.compare-legend {
+  color: var(--gold);
+  font-size: 0.66rem;
+}
+
+.ichart-svg {
+  width: 100%;
+  height: 104px;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* FX Instant Currency Converter */
+.fx-calc-box {
+  padding: 10px;
+  border-radius: 11px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fx-calc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #a7f3d0;
+}
+
+.fx-swap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(6, 11, 21, 0.5);
+  color: #6ee7b7;
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.fx-calc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.fx-calc-input-wrap,
+.fx-calc-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(5, 9, 17, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  font-size: 0.76rem;
+}
+
+.fx-calc-input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  outline: none;
+}
+
+.fx-calc-ccy {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.fx-calc-eq {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+/* Feature 5: Globe News Pins & News Detail Card */
+.globe-news-pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(24, 18, 8, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fde68a;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.globe-news-pin.sent-bullish {
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #a7f3d0;
+}
+
+.globe-news-pin.sent-bearish {
+  border-color: rgba(244, 63, 94, 0.52);
+  color: #fecdd3;
+}
+
+.globe-news-pin.is-selected {
+  border-color: var(--accent);
+  background: rgba(12, 26, 46, 0.96);
+  color: #e0f2fe;
+}
+
+.news-pin-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cat-tag-news {
+  background: var(--gold-soft);
+  color: #fcd34d;
+}
+
+.sentiment-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.sentiment-tag.sent-bullish {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.sentiment-tag.sent-bearish {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.sentiment-tag.sent-neutral {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-secondary);
+}
+
+.news-card-title {
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.38;
+  color: var(--text-primary);
+}
+
+.news-card-summary {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.news-card-actions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+.btn-primary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.18);
+  border: 1px solid var(--border-active);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.btn-primary-link:hover {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+/* Watchlist 6-Tab Bar, Star Toggle & News Feed List */
+.segmented-tabs-6 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.segmented-tabs-6 .seg-tab {
+  font-size: 0.68rem;
+  padding: 6px 2px;
+}
+
+.market-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.market-row-wrap:hover {
+  background: var(--bg-hover);
+}
+
+.market-row-wrap.is-selected {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: var(--border-active);
+}
+
+.market-row-wrap.flash-up {
+  background: rgba(16, 185, 129, 0.13);
+}
+
+.market-row-wrap.flash-down {
+  background: rgba(244, 63, 94, 0.13);
+}
+
+.row-star-btn {
+  width: 26px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding-left: 4px;
+}
+
+.row-star-btn:hover {
+  color: var(--gold);
+}
+
+.row-star-btn.is-fav {
+  color: var(--gold);
+}
+
+.market-row-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 2px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-alert-icon {
+  color: var(--accent);
+}
+
+.news-list-row {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.news-list-row:hover {
+  background: var(--bg-hover);
+}
+
+.news-list-row.is-selected {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: var(--border-active);
+}
+
+.news-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.67rem;
+}
+
+.news-row-city {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 650;
+  color: #fcd34d;
+}
+
+.news-row-city.sent-bullish {
+  color: var(--up);
+}
+
+.news-row-city.sent-bearish {
+  color: var(--down);
+}
+
+.news-row-meta {
+  color: var(--text-muted);
+}
+
+.news-row-title {
+  font-size: 0.77rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Feature 6: Detail Header Actions & Price Alerts Panel */
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-btn.is-star-active {
+  color: var(--gold);
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.icon-btn.is-accent {
+  color: var(--accent);
+  border-color: var(--border-active);
+  background: var(--accent-soft);
+}
+
+.alert-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.alert-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.alert-select,
+.alert-input {
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(5, 9, 17, 0.72);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  outline: none;
+}
+
+.alert-save-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-active);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.alert-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.alert-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.68rem;
+  color: var(--text-primary);
+}
+
+.alert-chip.is-triggered {
+  border-color: rgba(16, 185, 129, 0.55);
+  color: var(--up);
+}
+
+.alert-del-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+}
+
+/* Toast Notification Banner */
+.toast-banner {
+  position: fixed;
+  bottom: 52px;
+  right: 16px;
+  z-index: 70;
+  max-width: 340px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(11, 20, 36, 0.96);
+  border: 1px solid var(--border-active);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(16px);
+}
+
+.toast-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.toast-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.toast-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.toast-body {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.toast-action-btn {
+  border: 1px solid var(--border-active);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.toast-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+}
+
+/* Mobile Responsive Refinements for V2 Features */
+.mobile-relay-wrap {
+  padding: 8px 12px 2px;
+}
+
+.mobile-relay-wrap .session-relay-bar {
+  box-shadow: none;
+  background: rgba(5, 9, 17, 0.45);
+}
+
+@media (max-width: 1280px) {
+  .desktop-relay-slot {
+    width: 360px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .desktop-relay-slot {
+    display: none;
+  }
+
+  .macro-hud-slot {
+    top: calc(56px + var(--safe-top));
+    left: 10px;
+    right: 10px;
+    justify-content: flex-start;
+  }
+
+  .macro-pulse-strip {
+    width: 100%;
+    border-radius: 12px;
+    padding: 4px 8px;
+  }
+
+  .risk-ko {
+    display: none;
+  }
+
+  .mobile-quick-strip {
+    top: calc(95px + var(--safe-top));
+  }
+
+  .toast-banner {
+    left: 12px;
+    right: 12px;
+    bottom: calc(78px + var(--safe-bottom));
+    max-width: none;
+  }
+}
