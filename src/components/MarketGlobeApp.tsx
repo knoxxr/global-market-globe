@@ -7,7 +7,6 @@ import {
   BellRing,
   ChevronDown,
   ChevronUp,
-  Globe2,
   HelpCircle,
   ListFilter,
   Map as MapIcon,
@@ -683,7 +682,14 @@ export default function MarketGlobeApp({
         <div className="hud-left">
           <div className="brand-lockup">
             <div className="brand-mark" aria-hidden="true">
-              <Globe2 size={18} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand-icon.png"
+                alt="ORBITAL MARKETS"
+                width={32}
+                height={32}
+                className="brand-mark-img"
+              />
             </div>
             <div className="brand-text">
               <h1 className="brand-title">ORBITAL MARKETS</h1>
