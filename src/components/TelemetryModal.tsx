@@ -105,7 +105,7 @@ export default function TelemetryModal({
         <div className="telemetry-stats-grid">
           <div className="stat-tile">
             <span className="stat-k">실데이터 매핑</span>
-            <span className="stat-v mono-num text-up">
+            <span className="stat-v mono-num text-ok">
               {telemetry?.liveMappedCount ?? 0} / {telemetry?.totalInstrumentsCount ?? 31} 종목
             </span>
           </div>
@@ -121,7 +121,7 @@ export default function TelemetryModal({
           </div>
           <div className="stat-tile">
             <span className="stat-k">캐시 방어율</span>
-            <span className="stat-v mono-num text-up">{hitRate}%</span>
+            <span className="stat-v mono-num text-ok">{hitRate}%</span>
           </div>
           <div className="stat-tile">
             <span className="stat-k">Singleflight 병합</span>

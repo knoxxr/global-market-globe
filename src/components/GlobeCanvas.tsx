@@ -89,13 +89,13 @@ export function getMidpointCoords(a: GeoPoint, b: GeoPoint): GeoPoint {
 function getHeatmapFillColor(changePercent: number, isNight: boolean): string {
   const intensity = Math.min(1, Math.abs(changePercent) / 2.6);
   if (changePercent >= 0) {
-    // Slate-teal -> Vivid Emerald
-    const alpha = isNight ? 0.32 + intensity * 0.48 : 0.36 + intensity * 0.56;
-    return `rgba(16, 185, 129, ${alpha.toFixed(2)})`;
+    // Korean Market Convention: Red = UP (상승)
+    const alpha = isNight ? 0.34 + intensity * 0.48 : 0.38 + intensity * 0.54;
+    return `rgba(244, 63, 94, ${alpha.toFixed(2)})`;
   }
-  // Slate-teal -> Vivid Coral Rose
-  const alpha = isNight ? 0.32 + intensity * 0.48 : 0.36 + intensity * 0.56;
-  return `rgba(244, 63, 94, ${alpha.toFixed(2)})`;
+  // Korean Market Convention: Blue = DOWN (하락)
+  const alpha = isNight ? 0.34 + intensity * 0.48 : 0.38 + intensity * 0.54;
+  return `rgba(59, 130, 246, ${alpha.toFixed(2)})`;
 }
 
 /**
@@ -708,7 +708,7 @@ export default function GlobeCanvas({
     const diamondGeom = new THREE.OctahedronGeometry(0.024, 0);
     const stemGeom = new THREE.CylinderGeometry(0.003, 0.003, 0.07, 6);
     stemGeom.translate(0, 0.035, 0);
-    const flowDotGeom = new THREE.SphereGeometry(0.011, 10, 10);
+    const flowDotGeom = new THREE.SphereGeometry(0.0062, 16, 16);
     const upAxis = new THREE.Vector3(0, 1, 0);
 
     const rebuildDataLayers = () => {
@@ -762,7 +762,7 @@ export default function GlobeCanvas({
           const isPositive = idx.changePercent >= 0;
           const isSelected = curSelected === idx.id;
 
-          const colorHex = isPositive ? 0x10b981 : 0xf43f5e;
+          const colorHex = isPositive ? 0xf43f5e : 0x3b82f6;
           const barHeight = THREE.MathUtils.clamp(
             0.045 + Math.abs(idx.changePercent) * 0.055,
             0.045,
@@ -772,7 +772,7 @@ export default function GlobeCanvas({
           const quat = new THREE.Quaternion().setFromUnitVectors(upAxis, normal);
 
           const barMat = new THREE.MeshBasicMaterial({
-            color: isSelected ? 0x38bdf8 : colorHex,
+            color: isSelected ? 0xfef08a : colorHex,
             transparent: true,
             opacity: isSelected ? 1.0 : idx.isOpen ? 0.92 : 0.65,
           });
@@ -784,7 +784,7 @@ export default function GlobeCanvas({
 
           // Surface pulse ring
           const ringMat = new THREE.MeshBasicMaterial({
-            color: isSelected ? 0x38bdf8 : idx.isOpen ? colorHex : 0x64748b,
+            color: isSelected ? 0xfef08a : idx.isOpen ? colorHex : 0x64748b,
             side: THREE.DoubleSide,
             transparent: true,
             opacity: isSelected ? 0.95 : idx.isOpen ? 0.8 : 0.35,
@@ -833,7 +833,7 @@ export default function GlobeCanvas({
 
           const isSelected = curSelected === pair.id;
           const isPositive = pair.changePercent >= 0;
-          const arcColor = isSelected ? 0x38bdf8 : isPositive ? 0x34d399 : 0xfb7185;
+          const arcColor = isSelected ? 0xfef08a : isPositive ? 0xfb7185 : 0x60a5fa;
           const baseOpacity =
             curSelected && !isSelected
               ? 0.2
@@ -854,7 +854,7 @@ export default function GlobeCanvas({
           const flowParticles: THREE.Mesh[] = [];
           for (let p = 0; p < particleCount; p++) {
             const dotMat = new THREE.MeshBasicMaterial({
-              color: isSelected ? 0x7dd3fc : arcColor,
+              color: isSelected ? 0xfef08a : arcColor,
               transparent: true,
               opacity: isSelected ? 1.0 : curFilter === "fx" ? 0.95 : 0.8,
             });
@@ -946,11 +946,11 @@ export default function GlobeCanvas({
           const normal = surfacePos.clone().normalize();
           const isSelected = curSelectedNews === item.id;
           const colorHex = isSelected
-            ? 0x38bdf8
+            ? 0xfef08a
             : item.sentiment === "bullish"
-            ? 0x34d399
-            : item.sentiment === "bearish"
             ? 0xfb7185
+            : item.sentiment === "bearish"
+            ? 0x60a5fa
             : 0xfbbf24;
 
           const dotMat = new THREE.MeshBasicMaterial({

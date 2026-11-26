@@ -187,7 +187,7 @@ export default function InteractiveChart({
       ? history.changePercent
       : asset.changePercent;
   const isPositive = periodChangePct >= 0;
-  const strokeColor = isPositive ? "#10b981" : "#f43f5e";
+  const strokeColor = isPositive ? "#f43f5e" : "#60a5fa";
 
   const handlePointerScrub = (clientX: number) => {
     const svg = svgRef.current;

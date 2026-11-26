@@ -45,7 +45,7 @@ export default function Sparkline({
     1
   )} Z`;
 
-  const strokeColor = positive ? "#10b981" : "#f43f5e";
+  const strokeColor = positive ? "#f43f5e" : "#60a5fa";
 
   return (
     <svg
