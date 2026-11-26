@@ -27,6 +27,7 @@ interface WatchlistPanelProps {
   favorites: string[];
   alerts: PriceAlert[];
   flashedIds: Record<string, "up" | "down">;
+  searchInputRef?: React.RefObject<HTMLInputElement | null>;
   onChangeTab: (tab: WatchlistTab) => void;
   onToggleFavorite: (assetId: string) => void;
   onSelectAsset: (asset: AnyMarketAsset) => void;
@@ -60,6 +61,7 @@ export default function WatchlistPanel({
   favorites,
   alerts,
   flashedIds,
+  searchInputRef,
   onChangeTab,
   onToggleFavorite,
   onSelectAsset,
@@ -132,13 +134,14 @@ export default function WatchlistPanel({
         <div className="search-box">
           <Search size={14} className="search-icon" />
           <input
+            ref={searchInputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={
               activeTab === "news"
                 ? "속보 키워드, 도시 검색 (예: Fed, Oil, 서울)"
-                : "티커, 도시, 종목 검색 (예: KOSPI, USD/KRW, 금)"
+                : "종목·도시 검색 (/ 단축키)"
             }
             className="search-input"
             aria-label="글로벌 종목 및 속보 검색"

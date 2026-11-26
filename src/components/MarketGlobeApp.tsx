@@ -3,10 +3,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
+  Bell,
   BellRing,
   ChevronDown,
   ChevronUp,
   Globe2,
+  HelpCircle,
   ListFilter,
   Map as MapIcon,
   Newspaper,
@@ -30,6 +32,7 @@ import type {
 } from "@/lib/market/types";
 import type { GlobeFocusTarget } from "./GlobeCanvas";
 import { getMidpointCoords } from "./GlobeCanvas";
+import AlertsManagerModal from "./AlertsManagerModal";
 import AssetDetailCard, { formatAssetPrice } from "./AssetDetailCard";
 import MacroPulseStrip from "./MacroPulseStrip";
 import NewsDetailCard from "./NewsDetailCard";
@@ -80,13 +83,16 @@ export default function MarketGlobeApp({
   const [showDayNight, setShowDayNight] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showNewsPins, setShowNewsPins] = useState(true);
+  const [showLegend, setShowLegend] = useState(false);
   const [desktopWatchlistOpen, setDesktopWatchlistOpen] = useState(true);
   const [mobileSheet, setMobileSheet] = useState<SheetSnap>("peek");
   const [showTelemetry, setShowTelemetry] = useState(false);
-  const [transportMode, setTransportMode] = useState<TransportMode>("sse");
+  const [showAlertsManager, setShowAlertsManager] = useState(false);
+  // Default to Vercel Edge CDN polling (s-maxage=15, SWR=45) to protect Serverless duration under high concurrency
+  const [transportMode, setTransportMode] = useState<TransportMode>("cdn-poll");
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "live" | "polling" | "paused" | "error"
-  >("connecting");
+  >("polling");
   const [flashedIds, setFlashedIds] = useState<Record<string, "up" | "down">>({});
   const [focusTarget, setFocusTarget] = useState<GlobeFocusTarget | null>(null);
 
@@ -99,6 +105,7 @@ export default function MarketGlobeApp({
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const didHydrateDeepLinkRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const showToast = useCallback((title: string, body?: string, assetId?: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -492,6 +499,58 @@ export default function MarketGlobeApp({
     });
   }, []);
 
+  const handleClearTriggeredAlerts = useCallback(() => {
+    setAlerts((prev) => {
+      const next = prev.filter((a) => !a.triggered);
+      try {
+        localStorage.setItem(LS_ALERTS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // Desktop keyboard shortcuts (/, Esc, H, N, Space)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+
+      if (e.key === "Escape") {
+        if (showTelemetry) setShowTelemetry(false);
+        else if (showAlertsManager) setShowAlertsManager(false);
+        else if (showLegend) setShowLegend(false);
+        else if (selectedAssetId) setSelectedAssetId(null);
+        else if (selectedNewsId) setSelectedNewsId(null);
+        return;
+      }
+
+      if (isTyping || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "/") {
+        e.preventDefault();
+        setDesktopWatchlistOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+      } else if (e.key === "h" || e.key === "H") {
+        setShowHeatmap((v) => !v);
+      } else if (e.key === "n" || e.key === "N") {
+        setShowNewsPins((v) => !v);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        setAutoRotate((v) => !v);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showTelemetry, showAlertsManager, showLegend, selectedAssetId, selectedNewsId]);
+
   const handleShareView = useCallback(async () => {
     if (typeof window === "undefined") return;
     const shareUrl = window.location.href;
@@ -710,6 +769,21 @@ export default function MarketGlobeApp({
 
             <button
               type="button"
+              className={`tool-icon-btn tool-bell-btn ${
+                alerts.some((a) => !a.triggered) ? "is-active" : ""
+              }`}
+              onClick={() => setShowAlertsManager(true)}
+              title="등록된 목표가 알림 통합 관리"
+              aria-label="목표가 알림 관리 열기"
+            >
+              <Bell size={14} />
+              {alerts.length > 0 && (
+                <span className="bell-count-badge mono-num">{alerts.length}</span>
+              )}
+            </button>
+
+            <button
+              type="button"
               className="tool-icon-btn"
               onClick={handleShareView}
               title="현재 지구본 뷰 딥링크 복사"
@@ -820,12 +894,17 @@ export default function MarketGlobeApp({
               {advancingCount} / {allAssets.length}
             </span>
           </div>
-          <div className="summary-stat">
-            <span className="summary-label">관심 · 알림</span>
+          <button
+            type="button"
+            className="summary-stat summary-stat-btn"
+            onClick={() => setShowAlertsManager(true)}
+            title="목표가 알림 관리 열기"
+          >
+            <span className="summary-label">관심 · 알림 관리</span>
             <span className="summary-val mono-num">
               ★{favorites.length} · 🔔{alerts.filter((a) => !a.triggered).length}
             </span>
-          </div>
+          </button>
         </div>
         <WatchlistPanel
           indices={snapshot.indices}
@@ -838,6 +917,7 @@ export default function MarketGlobeApp({
           favorites={favorites}
           alerts={alerts}
           flashedIds={flashedIds}
+          searchInputRef={searchInputRef}
           onChangeTab={handleChangeWatchlistTab}
           onToggleFavorite={handleToggleFavorite}
           onSelectAsset={handleSelectAsset}
@@ -871,6 +951,46 @@ export default function MarketGlobeApp({
           ) : null}
         </div>
       )}
+
+      {/* Collapsible Visual Legend (Bottom-Right) */}
+      <div className="legend-widget" aria-label="지구본 색상 및 기호 범례">
+        {showLegend && (
+          <div className="legend-popover">
+            <div className="legend-pop-row">
+              <span className="legend-dot-up" />
+              <span>빨강 (+): 상승 / 기준통화 강세</span>
+            </div>
+            <div className="legend-pop-row">
+              <span className="legend-dot-down" />
+              <span>파랑 (-): 하락 / 상대통화 강세</span>
+            </div>
+            <div className="legend-pop-row">
+              <span className="legend-swatch swatch-fx" />
+              <span>외환 곡선: 강세 방향으로 광점 이동</span>
+            </div>
+            <div className="legend-pop-row">
+              <span className="legend-swatch swatch-cmd" />
+              <span>다이아몬드: 글로벌 원자재 허브</span>
+            </div>
+            <div className="legend-pop-row">
+              <span className="legend-dot-news" />
+              <span>NEWS 핀: 실시간 글로벌 금융 속보</span>
+            </div>
+            <div className="legend-shortcuts mono-num">
+              / 검색 · H 히트맵 · N 속보 · Space 회전
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          className={`legend-toggle-pill ${showLegend ? "is-active" : ""}`}
+          onClick={() => setShowLegend((v) => !v)}
+          aria-expanded={showLegend}
+        >
+          <HelpCircle size={13} />
+          <span>범례</span>
+        </button>
+      </div>
 
       {/* Feature 3: 24h Global Market Session Relay Bar (Desktop Bottom Center) */}
       <div className="desktop-relay-slot">
@@ -924,6 +1044,7 @@ export default function MarketGlobeApp({
           {selectedAsset ? (
             <div className="mobile-detail-wrap">
               <AssetDetailCard
+                key={selectedAsset.id}
                 asset={selectedAsset}
                 allAssets={allAssets}
                 isFavorite={favorites.includes(selectedAsset.id)}
@@ -1017,6 +1138,18 @@ export default function MarketGlobeApp({
             <X size={13} />
           </button>
         </div>
+      )}
+
+      {/* Unified Price Alerts Manager Modal */}
+      {showAlertsManager && (
+        <AlertsManagerModal
+          alerts={alerts}
+          allAssets={allAssets}
+          onFocusAsset={handleSelectAsset}
+          onRemoveAlert={handleRemoveAlert}
+          onClearTriggered={handleClearTriggeredAlerts}
+          onClose={() => setShowAlertsManager(false)}
+        />
       )}
 
       {/* Architecture & API Rate-Limit Protection Telemetry Modal */}

@@ -74,6 +74,20 @@ export default function TelemetryModal({
           <div className="transport-grid">
             <button
               type="button"
+              className={`transport-card ${transportMode === "cdn-poll" ? "is-active" : ""}`}
+              onClick={() => onChangeTransport("cdn-poll")}
+            >
+              <div className="transport-top">
+                <Layers size={15} />
+                <span>초절약 Vercel Edge CDN (기본)</span>
+              </div>
+              <p>
+                <code>s-maxage=15, SWR=45</code> 헤더로 엣지 캐시 직결. 수만 명 동시 접속에도 서버리스 부담 제로.
+              </p>
+            </button>
+
+            <button
+              type="button"
               className={`transport-card ${transportMode === "sse" ? "is-active" : ""}`}
               onClick={() => onChangeTransport("sse")}
             >
@@ -82,21 +96,7 @@ export default function TelemetryModal({
                 <span>실시간 SSE 스트림</span>
               </div>
               <p>
-                공유 서버 캐시에서만 읽어 2.4초 주기로 푸시. 백그라운드 탭 전환 시 자동 일시정지.
-              </p>
-            </button>
-
-            <button
-              type="button"
-              className={`transport-card ${transportMode === "cdn-poll" ? "is-active" : ""}`}
-              onClick={() => onChangeTransport("cdn-poll")}
-            >
-              <div className="transport-top">
-                <Layers size={15} />
-                <span>초절약 Vercel Edge CDN</span>
-              </div>
-              <p>
-                <code>s-maxage=15, SWR=45</code> 헤더로 엣지 캐시 직결. 대규모 트래픽에도 서버리스 부담 제로.
+                공유 서버 캐시에서 변경 즉시 푸시. 백그라운드 탭 전환 시 자동 일시정지.
               </p>
             </button>
           </div>
@@ -106,7 +106,7 @@ export default function TelemetryModal({
           <div className="stat-tile">
             <span className="stat-k">실데이터 매핑</span>
             <span className="stat-v mono-num text-ok">
-              {telemetry?.liveMappedCount ?? 0} / {telemetry?.totalInstrumentsCount ?? 31} 종목
+              {telemetry?.liveMappedCount ?? 0} / {telemetry?.totalInstrumentsCount ?? 35} 종목
             </span>
           </div>
           <div className="stat-tile">
@@ -147,7 +147,7 @@ export default function TelemetryModal({
           <div className="provider-row">
             <div className="provider-name">
               <Activity size={14} />
-              <span>글로벌 실거래소 피드 (Yahoo v8 + ECB 환율)</span>
+              <span>글로벌 실거래소 피드 (Yahoo v8 2회 배치 + ECB 환율)</span>
             </div>
             <span
               className={`status-pill ${
@@ -199,7 +199,7 @@ export default function TelemetryModal({
         </div>
 
         <div className="modal-footnote">
-          API 키가 없어도 31개 글로벌 주가지수·외환·원자재 실제 시세와 15분봉 일중 차트가 자동 매핑되며,{" "}
+          API 키가 없어도 35개 글로벌 주가지수·외환·원자재·거시지표 실제 시세와 15분봉 일중 차트가 자동 매핑되며,{" "}
           <code>POLYGON_API_KEY</code>·<code>FINNHUB_API_KEY</code>를 추가하면 상용 API가 1순위로 우선 적용됩니다.
         </div>
       </div>

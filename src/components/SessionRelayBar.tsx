@@ -26,7 +26,6 @@ function getSessionStatus(item: SessionRelayItem, now: Date): {
     const daysToMon = day === 6 ? 2 : 1;
     minsUntilOpen = daysToMon * 1440 + openMins - curMins;
   } else if (minsUntilOpen <= 0) {
-    // Next business day
     const extraDays = day === 5 ? 3 : 1;
     minsUntilOpen = extraDays * 1440 + openMins - curMins;
   }
@@ -44,19 +43,22 @@ function formatCountdown(totalSeconds: number): string {
 }
 
 export default function SessionRelayBar({ onFocusCoords }: SessionRelayBarProps) {
-  const [now, setNow] = useState<Date>(() => new Date());
+  // Start as null so SSR HTML and initial client render match 100% (zero hydration mismatch)
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    queueMicrotask(() => setNow(new Date()));
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const utcProgressPct =
-    ((now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60) / 1440) * 100;
+  const utcProgressPct = now
+    ? ((now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60) / 1440) * 100
+    : 0;
 
   const statuses = SESSION_RELAY_BLOCKS.map((block) => ({
     block,
-    ...getSessionStatus(block, now),
+    ...(now ? getSessionStatus(block, now) : { isOpen: false, minsUntilOpen: 0 }),
   }));
 
   const openSessions = statuses.filter((s) => s.isOpen);
@@ -64,16 +66,26 @@ export default function SessionRelayBar({ onFocusCoords }: SessionRelayBarProps)
     .filter((s) => !s.isOpen)
     .sort((a, b) => a.minsUntilOpen - b.minsUntilOpen)[0];
 
-  const nextSeconds = nextOpening
-    ? Math.max(0, nextOpening.minsUntilOpen * 60 - now.getUTCSeconds())
-    : 0;
+  const nextSeconds =
+    now && nextOpening
+      ? Math.max(0, nextOpening.minsUntilOpen * 60 - now.getUTCSeconds())
+      : 0;
 
-  const kstTime = now.toLocaleTimeString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const kstTime = now
+    ? now.toLocaleTimeString("ko-KR", {
+        timeZone: "Asia/Seoul",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    : "--:--";
+
+  const utcTime = now
+    ? `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(
+        2,
+        "0"
+      )}`
+    : "--:--";
 
   return (
     <div className="session-relay-bar" aria-label="24시간 글로벌 증시 개장 릴레이">
@@ -82,14 +94,13 @@ export default function SessionRelayBar({ onFocusCoords }: SessionRelayBarProps)
           <Clock size={12} />
           <span>KST {kstTime}</span>
           <span className="relay-sep">·</span>
-          <span>
-            UTC {String(now.getUTCHours()).padStart(2, "0")}:
-            {String(now.getUTCMinutes()).padStart(2, "0")}
-          </span>
+          <span>UTC {utcTime}</span>
         </div>
 
         <div className="relay-countdown mono-num">
-          {openSessions.length > 0 ? (
+          {!now ? (
+            <span>글로벌 세션 동기화 중...</span>
+          ) : openSessions.length > 0 ? (
             <span className="relay-open-summary">
               <span className="live-mini-dot" />
               개장중: {openSessions.map((o) => o.block.labelKo).join(" · ")}
@@ -130,11 +141,13 @@ export default function SessionRelayBar({ onFocusCoords }: SessionRelayBarProps)
           );
         })}
 
-        <div
-          className="relay-now-marker"
-          style={{ left: `${utcProgressPct}%` }}
-          title="현재 UTC 시각"
-        />
+        {now && (
+          <div
+            className="relay-now-marker"
+            style={{ left: `${utcProgressPct}%` }}
+            title="현재 UTC 시각"
+          />
+        )}
       </div>
     </div>
   );

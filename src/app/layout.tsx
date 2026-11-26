@@ -25,7 +25,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "ORBITAL MARKETS — 실시간 글로벌 주가 · 외환 · 원자재 3D 지구본",
   description:
-    "Polygon.io 및 Finnhub API와 다중 접속 캐시 팬아웃 아키텍처를 통해 전 세계 주요 주가지수, 실시간 외환(FX) 환율, 원자재 시세를 3D 지구본에 실시간으로 시각화합니다.",
+    "전 세계 35개 주요 주가지수, 실시간 외환(FX), 원자재 선물, 거시 리스크 지표와 글로벌 속보를 3D 지구본에 실시간으로 시각화합니다.",
   keywords: [
     "글로벌 주가지수",
     "실시간 환율",
@@ -35,6 +35,18 @@ export const metadata: Metadata = {
     "Finnhub",
     "Vercel",
   ],
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Orbital Markets",
+  },
+  openGraph: {
+    title: "ORBITAL MARKETS — 실시간 글로벌 주가 · 외환 · 원자재 3D 지구본",
+    description:
+      "다중 접속 Edge CDN 캐시와 3D 벡터 지구본으로 전 세계 주가·환율·원자재·속보를 한눈에 확인하세요.",
+    type: "website",
+    locale: "ko_KR",
+  },
 };
 
 export const viewport: Viewport = {

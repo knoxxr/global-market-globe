@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus, RotateCcw } from "lucide-react";
 import * as THREE from "three";
 import * as topojson from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
@@ -423,6 +424,7 @@ export default function GlobeCanvas({
 }: GlobeCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelContainerRef = useRef<HTMLDivElement | null>(null);
+  const [contextLost, setContextLost] = useState(false);
 
   // Refs synced to latest props via useEffect so WebGL loop runs at 60fps without recreating Three.js context
   const propsRef = useRef({
@@ -1287,6 +1289,17 @@ export default function GlobeCanvas({
 
     animate();
 
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+      setContextLost(true);
+    };
+    const handleContextRestored = () => {
+      setContextLost(false);
+      syncSceneDataRef.current?.();
+    };
+    canvasEl.addEventListener("webglcontextlost", handleContextLost, false);
+    canvasEl.addEventListener("webglcontextrestored", handleContextRestored, false);
+
     return () => {
       cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
@@ -1295,6 +1308,8 @@ export default function GlobeCanvas({
       canvasEl.removeEventListener("pointerup", handlePointerUp);
       canvasEl.removeEventListener("pointercancel", handlePointerUp);
       canvasEl.removeEventListener("wheel", handleWheel);
+      canvasEl.removeEventListener("webglcontextlost", handleContextLost);
+      canvasEl.removeEventListener("webglcontextrestored", handleContextRestored);
 
       dayMap.dispose();
       nightMap.dispose();
@@ -1321,6 +1336,22 @@ export default function GlobeCanvas({
     };
   }, []);
 
+  const handleZoomBy = (delta: number) => {
+    const cam = cameraStateRef.current;
+    cam.targetDistance = THREE.MathUtils.clamp(cam.targetDistance + delta, 1.65, 4.2);
+    cam.userInteractedAt = Date.now();
+  };
+
+  const handleResetView = () => {
+    const cam = cameraStateRef.current;
+    const isSmall =
+      typeof window !== "undefined" ? window.innerWidth < 768 : false;
+    cam.targetLat = 24;
+    cam.targetLng = 40;
+    cam.targetDistance = isSmall ? 3.25 : 2.85;
+    cam.userInteractedAt = Date.now();
+  };
+
   return (
     <div className="globe-stage">
       <div
@@ -1328,10 +1359,66 @@ export default function GlobeCanvas({
         className="globe-webgl-host"
         aria-label="실시간 글로벌 금융 3D 지구본"
       />
+
+      {contextLost && (
+        <div className="webgl-lost-banner" role="alert">
+          <span>3D 그래픽 컨텍스트가 일시 중단되었습니다.</span>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => window.location.reload()}
+          >
+            화면 복구
+          </button>
+        </div>
+      )}
+
+      {/* On-Screen Zoom & View Reset Controls */}
+      <div className="globe-zoom-stack" aria-label="지구본 확대 축소 컨트롤">
+        <button
+          type="button"
+          className="zoom-ctrl-btn"
+          onClick={() => handleZoomBy(-0.38)}
+          title="지구본 확대"
+          aria-label="확대"
+        >
+          <Plus size={15} />
+        </button>
+        <button
+          type="button"
+          className="zoom-ctrl-btn"
+          onClick={() => handleZoomBy(0.38)}
+          title="지구본 축소"
+          aria-label="축소"
+        >
+          <Minus size={15} />
+        </button>
+        <button
+          type="button"
+          className="zoom-ctrl-btn"
+          onClick={handleResetView}
+          title="기본 시점으로 초기화"
+          aria-label="시점 초기화"
+        >
+          <RotateCcw size={14} />
+        </button>
+      </div>
+
       <div ref={labelContainerRef} className="globe-labels-layer" aria-hidden="false">
         {allAssets.map((asset) => {
           const isPositive = asset.changePercent >= 0;
           const isSelected = selectedAssetId === asset.id;
+          const fxStrongCcy =
+            asset.category === "fx"
+              ? isPositive
+                ? asset.baseCurrency
+                : asset.quoteCurrency
+              : null;
+          const pinTitle =
+            asset.category === "fx" && fxStrongCcy
+              ? `${asset.nameKo} (${asset.symbol}) · ${fxStrongCcy} 강세`
+              : `${asset.nameKo} (${asset.symbol})`;
+
           return (
             <button
               key={asset.id}
@@ -1347,6 +1434,7 @@ export default function GlobeCanvas({
                 isSelected ? "is-selected" : ""
               }`}
               onClick={() => onSelectAsset(asset)}
+              title={pinTitle}
             >
               <span
                 className={`pin-dot ${
@@ -1362,6 +1450,9 @@ export default function GlobeCanvas({
                 {isPositive ? "+" : ""}
                 {asset.changePercent.toFixed(2)}%
               </span>
+              {fxStrongCcy && (isSelected || activeFilter === "fx") && (
+                <span className="pin-fx-hint">{fxStrongCcy}강세</span>
+              )}
             </button>
           );
         })}
