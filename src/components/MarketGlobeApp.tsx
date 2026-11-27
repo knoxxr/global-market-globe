@@ -971,8 +971,8 @@ export default function MarketGlobeApp({
               <span>파랑 (-): 하락 / 상대통화 강세</span>
             </div>
             <div className="legend-pop-row">
-              <span className="legend-swatch swatch-fx" />
-              <span>외환 곡선: 강세 방향으로 광점 이동</span>
+              <span className="legend-swatch swatch-fx-grad" />
+              <span>외환 곡선: 파랑(약세) → 빨강(강세) 화살표</span>
             </div>
             <div className="legend-pop-row">
               <span className="legend-swatch swatch-cmd" />

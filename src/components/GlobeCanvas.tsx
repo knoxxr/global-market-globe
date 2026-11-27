@@ -711,6 +711,7 @@ export default function GlobeCanvas({
     const stemGeom = new THREE.CylinderGeometry(0.003, 0.003, 0.07, 6);
     stemGeom.translate(0, 0.035, 0);
     const flowDotGeom = new THREE.SphereGeometry(0.0062, 16, 16);
+    const fxArrowGeom = new THREE.ConeGeometry(0.0068, 0.022, 12);
     const upAxis = new THREE.Vector3(0, 1, 0);
 
     const rebuildDataLayers = () => {
@@ -725,7 +726,8 @@ export default function GlobeCanvas({
             child.geometry !== ringGeom &&
             child.geometry !== diamondGeom &&
             child.geometry !== stemGeom &&
-            child.geometry !== flowDotGeom
+            child.geometry !== flowDotGeom &&
+            child.geometry !== fxArrowGeom
           ) {
             child.geometry.dispose();
           }
@@ -820,50 +822,102 @@ export default function GlobeCanvas({
         }
       }
 
-      // 2) REAL-TIME FX CORRIDORS — Elevated 3D Geodesic Arcs + Animated Flow Packets
+      // 2) REAL-TIME FX CORRIDORS — Weak(Blue) -> Strong(Red) Gradient Arcs + Directional 3D Arrows
       if (curFilter === "all" || curFilter === "fx") {
+        const weakColor = new THREE.Color(0x60a5fa); // 약세 (파랑)
+        const strongColor = new THREE.Color(0xf43f5e); // 강세 (빨강)
+        const selectedColor = new THREE.Color(0xfef08a);
+
         for (const pair of curFx) {
-          const start = latLngToVector3(pair.fromCoords.lat, pair.fromCoords.lng, GLOBE_RADIUS + 0.006);
-          const end = latLngToVector3(pair.toCoords.lat, pair.toCoords.lng, GLOBE_RADIUS + 0.006);
+          const isSelected = curSelected === pair.id;
+          const isPositive = pair.changePercent >= 0;
+
+          // Curve always runs strictly from WEAK currency city (t=0, Blue) -> STRONG currency city (t=1, Red)
+          const weakCoords = isPositive ? pair.toCoords : pair.fromCoords;
+          const strongCoords = isPositive ? pair.fromCoords : pair.toCoords;
+
+          const start = latLngToVector3(weakCoords.lat, weakCoords.lng, GLOBE_RADIUS + 0.006);
+          const end = latLngToVector3(strongCoords.lat, strongCoords.lng, GLOBE_RADIUS + 0.006);
           const chordDist = start.distanceTo(end);
           const altitude = GLOBE_RADIUS + THREE.MathUtils.clamp(chordDist * 0.24, 0.12, 0.44);
           const mid = start.clone().add(end).multiplyScalar(0.5).normalize().multiplyScalar(altitude);
 
           const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
-          const points = curve.getPoints(44);
+          const segments = 48;
+          const points = curve.getPoints(segments);
           const arcGeom = new THREE.BufferGeometry().setFromPoints(points);
 
-          const isSelected = curSelected === pair.id;
-          const isPositive = pair.changePercent >= 0;
-          const arcColor = isSelected ? 0xfef08a : isPositive ? 0xfb7185 : 0x60a5fa;
+          // Per-vertex color gradient: Weak Blue (t=0) -> Strong Red (t=1)
+          const colors = new Float32Array(points.length * 3);
+          const tempCol = new THREE.Color();
+          for (let i = 0; i < points.length; i++) {
+            const t = i / (points.length - 1);
+            if (isSelected) {
+              tempCol.copy(weakColor).lerp(strongColor, t).lerp(selectedColor, 0.22);
+            } else {
+              tempCol.copy(weakColor).lerp(strongColor, t);
+            }
+            colors[i * 3] = tempCol.r;
+            colors[i * 3 + 1] = tempCol.g;
+            colors[i * 3 + 2] = tempCol.b;
+          }
+          arcGeom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
           const baseOpacity =
             curSelected && !isSelected
-              ? 0.2
+              ? 0.16
               : curFilter === "fx"
-              ? 0.85
-              : 0.52;
+              ? 0.88
+              : 0.56;
 
           const arcMat = new THREE.LineBasicMaterial({
-            color: arcColor,
+            vertexColors: true,
             transparent: true,
             opacity: isSelected ? 1.0 : baseOpacity,
           });
           const arcLine = new THREE.Line(arcGeom, arcMat);
           dataGroup.add(arcLine);
 
-          // Traveling flow particles along the geodesic arc
-          const particleCount = isSelected ? 3 : 2;
-          const flowParticles: THREE.Mesh[] = [];
-          for (let p = 0; p < particleCount; p++) {
-            const dotMat = new THREE.MeshBasicMaterial({
-              color: isSelected ? 0xfef08a : arcColor,
+          // Endpoint rings when selected or focused in FX layer (Blue=Weak origin, Red=Strong destination)
+          if (isSelected || curFilter === "fx") {
+            const weakRingMat = new THREE.MeshBasicMaterial({
+              color: 0x60a5fa,
+              side: THREE.DoubleSide,
               transparent: true,
-              opacity: isSelected ? 1.0 : curFilter === "fx" ? 0.95 : 0.8,
+              opacity: isSelected ? 0.9 : 0.45,
             });
-            const dot = new THREE.Mesh(flowDotGeom, dotMat);
-            dot.scale.setScalar(isSelected ? 1.35 : 0.9);
-            dataGroup.add(dot);
-            flowParticles.push(dot);
+            const weakRing = new THREE.Mesh(ringGeom, weakRingMat);
+            weakRing.position.copy(start);
+            weakRing.lookAt(start.clone().multiplyScalar(2));
+            weakRing.scale.setScalar(isSelected ? 1.15 : 0.8);
+            dataGroup.add(weakRing);
+
+            const strongRingMat = new THREE.MeshBasicMaterial({
+              color: 0xf43f5e,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: isSelected ? 0.95 : 0.6,
+            });
+            const strongRing = new THREE.Mesh(ringGeom, strongRingMat);
+            strongRing.position.copy(end);
+            strongRing.lookAt(end.clone().multiplyScalar(2));
+            strongRing.scale.setScalar(isSelected ? 1.4 : 0.95);
+            dataGroup.add(strongRing);
+          }
+
+          // Sleek 3D directional arrowheads gliding smoothly from Weak (Blue) -> Strong (Red)
+          const arrowCount = isSelected ? 3 : 2;
+          const flowParticles: THREE.Mesh[] = [];
+          for (let p = 0; p < arrowCount; p++) {
+            const arrowMat = new THREE.MeshBasicMaterial({
+              color: 0xf43f5e,
+              transparent: true,
+              opacity: 0.85,
+            });
+            const arrow = new THREE.Mesh(fxArrowGeom, arrowMat);
+            arrow.scale.setScalar(isSelected ? 1.15 : 0.82);
+            dataGroup.add(arrow);
+            flowParticles.push(arrow);
           }
 
           // Hit target at apex of arc
@@ -884,7 +938,7 @@ export default function GlobeCanvas({
             arcLine,
             arcCurve: curve,
             flowParticles,
-            flowDirection: isPositive ? 1 : -1,
+            flowDirection: 1, // Always flows t: 0 (Weak Blue) -> 1 (Strong Red)
           });
         }
       }
@@ -1122,6 +1176,8 @@ export default function GlobeCanvas({
     const clock = new THREE.Clock();
     const projectedVec = new THREE.Vector3();
     const camDirVec = new THREE.Vector3();
+    const fxWeakCol = new THREE.Color(0x60a5fa);
+    const fxStrongCol = new THREE.Color(0xf43f5e);
     let sunTimer = 0;
 
     const animate = () => {
@@ -1185,15 +1241,28 @@ export default function GlobeCanvas({
           item.diamondMesh.rotation.x = Math.sin(elapsed * 0.9) * 0.25;
         }
 
-        // FX flowing packets along geodesic curves
+        // FX directional arrowheads flowing calmly from Weak (Blue, t=0) -> Strong (Red, t=1)
         if (item.arcCurve && item.flowParticles) {
-          const speed = propsRef.current.selectedAssetId === item.id ? 0.34 : 0.22;
-          const dir = item.flowDirection ?? 1;
+          const isSelected = propsRef.current.selectedAssetId === item.id;
+          const speed = isSelected ? 0.19 : 0.13;
           const count = item.flowParticles.length;
+          const curFilter = propsRef.current.activeFilter;
+          const maxOpacity = isSelected ? 0.98 : curFilter === "fx" ? 0.88 : 0.72;
+
           for (let i = 0; i < count; i++) {
-            let t = (elapsed * speed + i / count) % 1;
-            if (dir < 0) t = 1 - t;
-            item.flowParticles[i].position.copy(item.arcCurve.getPoint(t));
+            const t = (elapsed * speed + i / count) % 1;
+            const arrow = item.flowParticles[i];
+            arrow.position.copy(item.arcCurve.getPoint(t));
+
+            // Point arrowhead directly along curve tangent toward stronger currency
+            const tangent = item.arcCurve.getTangent(t).normalize();
+            arrow.quaternion.setFromUnitVectors(upAxis, tangent);
+
+            // Smooth color shift Blue (weak) -> Red (strong) + soft fade at both endpoints
+            const mat = arrow.material as THREE.MeshBasicMaterial;
+            mat.color.copy(fxWeakCol).lerp(fxStrongCol, t);
+            const edgeFade = Math.sin(t * Math.PI);
+            mat.opacity = maxOpacity * Math.pow(edgeFade, 0.55);
           }
         }
 
@@ -1329,6 +1398,7 @@ export default function GlobeCanvas({
       diamondGeom.dispose();
       stemGeom.dispose();
       flowDotGeom.dispose();
+      fxArrowGeom.dispose();
       renderer.dispose();
       if (canvasEl.parentNode === container) {
         container.removeChild(canvasEl);
@@ -1408,16 +1478,39 @@ export default function GlobeCanvas({
         {allAssets.map((asset) => {
           const isPositive = asset.changePercent >= 0;
           const isSelected = selectedAssetId === asset.id;
-          const fxStrongCcy =
-            asset.category === "fx"
-              ? isPositive
-                ? asset.baseCurrency
-                : asset.quoteCurrency
-              : null;
-          const pinTitle =
-            asset.category === "fx" && fxStrongCcy
-              ? `${asset.nameKo} (${asset.symbol}) · ${fxStrongCcy} 강세`
-              : `${asset.nameKo} (${asset.symbol})`;
+
+          if (asset.category === "fx") {
+            const strongCcy = isPositive ? asset.baseCurrency : asset.quoteCurrency;
+            const weakCcy = isPositive ? asset.quoteCurrency : asset.baseCurrency;
+            const strongCity = isPositive ? asset.fromCityKo : asset.toCityKo;
+            const weakCity = isPositive ? asset.toCityKo : asset.fromCityKo;
+
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                ref={(el) => {
+                  if (el) {
+                    labelElementsRef.current.set(asset.id, el);
+                  } else {
+                    labelElementsRef.current.delete(asset.id);
+                  }
+                }}
+                className={`globe-pin-label globe-pin-fx ${
+                  isSelected ? "is-selected" : ""
+                }`}
+                onClick={() => onSelectAsset(asset)}
+                title={`${asset.symbol} · ${weakCcy}(${weakCity}) 약세 → ${strongCcy}(${strongCity}) 강세`}
+              >
+                <span className="fx-pin-weak">{weakCcy}</span>
+                <span className="fx-pin-arrow">→</span>
+                <span className="fx-pin-strong">{strongCcy}▲</span>
+                <span className="fx-pin-mag mono-num">
+                  {Math.abs(asset.changePercent).toFixed(2)}%
+                </span>
+              </button>
+            );
+          }
 
           return (
             <button
@@ -1434,7 +1527,7 @@ export default function GlobeCanvas({
                 isSelected ? "is-selected" : ""
               }`}
               onClick={() => onSelectAsset(asset)}
-              title={pinTitle}
+              title={`${asset.nameKo} (${asset.symbol})`}
             >
               <span
                 className={`pin-dot ${
@@ -1450,9 +1543,6 @@ export default function GlobeCanvas({
                 {isPositive ? "+" : ""}
                 {asset.changePercent.toFixed(2)}%
               </span>
-              {fxStrongCcy && (isSelected || activeFilter === "fx") && (
-                <span className="pin-fx-hint">{fxStrongCcy}강세</span>
-              )}
             </button>
           );
         })}

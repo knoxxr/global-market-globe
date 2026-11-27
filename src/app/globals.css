@@ -2671,3 +2671,73 @@ input {
     bottom: calc(78px + var(--safe-bottom));
   }
 }
+
+/* ==========================================================================
+   FX Intuitive Weak (Blue) -> Strong (Red) Pin, Banner & Gradient Swatch
+   ========================================================================== */
+
+.fx-pin-weak {
+  font-weight: 600;
+  color: var(--down);
+  letter-spacing: 0.01em;
+}
+
+.fx-pin-arrow {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.fx-pin-strong {
+  font-weight: 700;
+  color: var(--up);
+  letter-spacing: 0.01em;
+}
+
+.fx-pin-mag {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+.swatch-fx-grad {
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--down) 0%, var(--up) 100%);
+}
+
+.fx-strength-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: rgba(5, 9, 17, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.fx-pill-weak {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--down-soft);
+  color: var(--down);
+  white-space: nowrap;
+}
+
+.fx-pill-strong {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--up-soft);
+  color: var(--up);
+  white-space: nowrap;
+}
+
+.fx-banner-arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

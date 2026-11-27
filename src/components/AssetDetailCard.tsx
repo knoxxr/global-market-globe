@@ -197,6 +197,21 @@ export default function AssetDetailCard({
         </div>
       </div>
 
+      {/* FX Intuitive Weak -> Strong Direction Banner */}
+      {asset.category === "fx" && (
+        <div className="fx-strength-banner" aria-label="통화 강약 방향">
+          <span className="fx-pill-weak">
+            약세 {isPositive ? asset.quoteCurrency : asset.baseCurrency} (
+            {isPositive ? asset.toCityKo : asset.fromCityKo})
+          </span>
+          <ArrowRight size={13} className="fx-banner-arrow" />
+          <span className="fx-pill-strong">
+            강세 {isPositive ? asset.baseCurrency : asset.quoteCurrency} (
+            {isPositive ? asset.fromCityKo : asset.toCityKo})
+          </span>
+        </div>
+      )}
+
       {/* Interactive Multi-Range Chart (1D / 1W / 1M / 3M + 2-Asset Compare) */}
       <InteractiveChart asset={asset} compareCandidates={allAssets} />
 
